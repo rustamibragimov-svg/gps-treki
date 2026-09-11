@@ -2,6 +2,10 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<!-- Исходник публичный, поэтому ограничиваем, куда страница вообще может ходить.
+     Скрипт и стили внутри файла, отсюда 'unsafe-inline'; главное здесь connect-src:
+     даже при чужом коде на странице токен некуда отправить. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: https://tile.openstreetmap.org https://cdnjs.cloudflare.com; connect-src 'self' https://zbqjblrnbnsutpbtmqdi.supabase.co; form-action 'self'; base-uri 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Треки водителей</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
@@ -294,13 +298,9 @@ const COLORS   = ['#0F6E6E','#B4531A','#3B5BA5','#7A4E9E','#1F7A3D','#A63D40','#
 const NO_REGION = 'Регион не указан';
 
 /* ============ хранилище (только этот браузер) ============ */
+/* Только localStorage. Прежняя ветка через window.storage убрана: здесь лежат
+   токены сессии, и подменяемый снаружи объект решал бы, куда они попадут. */
 const local = (() => {
-  if (window.storage && typeof window.storage.get === 'function') {
-    return {
-      async get(k){ try { const r = await window.storage.get(k); return r ? r.value : null; } catch(e){ return null; } },
-      async set(k,v){ try { await window.storage.set(k,v); } catch(e){} }
-    };
-  }
   try { localStorage.setItem('__t','1'); localStorage.removeItem('__t');
     return { async get(k){ return localStorage.getItem(k); }, async set(k,v){ localStorage.setItem(k,v); } };
   } catch(e){ const m={}; return { async get(k){ return m[k] ?? null; }, async set(k,v){ m[k]=v; } }; }
@@ -344,11 +344,25 @@ function authMessage(status, raw){
 async function saveSession(s){ session = s; await local.set(SESS_KEY, JSON.stringify(s)); }
 async function dropSession(){ session = null; await local.set(SESS_KEY, ''); }
 
+/* Обновление токена одно на всех. renderAll можно запустить в несколько потоков
+   (быстрые клики по трекам), и два одновременных обновления с одним и тем же
+   refresh-токеном при включённой ротации дадут отказ второму — он выкинул бы
+   пользователя на вход посреди работы. */
+let refreshing = null;
+function refreshNow(){
+  if (!refreshing){
+    refreshing = auth('refresh_token', { refresh_token: session.refresh_token })
+      .then(saveSession)
+      .finally(() => { refreshing = null; });
+  }
+  return refreshing;
+}
+
 /* токен живёт час: обновляем заранее, чтобы не ловить 401 посреди заливки точек */
 async function freshToken(){
   if (!session) throw new Error('Нужно войти.');
   if (session.expires_at - Date.now() > 60e3) return session.access_token;
-  await saveSession(await auth('refresh_token', { refresh_token: session.refresh_token }));
+  await refreshNow();
   return session.access_token;
 }
 
@@ -363,11 +377,13 @@ async function api(path, opts){
     }, (opts && opts.headers) || {})
   }));
 
-  let res = await call(await freshToken());
+  const used = await freshToken();
+  let res = await call(used);
   if (res.status === 401){
-    /* токен мог протухнуть раньше срока — одна попытка обновиться, потом на вход */
+    /* токен мог протухнуть раньше срока. Если соседний запрос уже обновил сессию,
+       просто повторяем с новым токеном, не запрашивая ещё одно обновление. */
     try {
-      await saveSession(await auth('refresh_token', { refresh_token: session.refresh_token }));
+      if (session.access_token === used) await refreshNow();
       res = await call(session.access_token);
     } catch(e){ await signOut('Сессия истекла, войдите заново.'); throw new Error('Сессия истекла.'); }
   }
@@ -551,8 +567,16 @@ async function addTrack(raw){
         await api('track_points', { method:'POST', body: JSON.stringify(payload.slice(i, i+BATCH)) });
       }
     } catch(e){
-      if (created){ try { await api('driver_tracks?id=eq.' + pgid(created.id), { method:'DELETE' }); } catch(_){} }
-      say('msg', 'Не записалось. ' + e.message, 'err');
+      let tail = '';
+      if (created){
+        try { await api('driver_tracks?id=eq.' + pgid(created.id), { method:'DELETE' }); }
+        catch(_){
+          /* откат не прошёл (например, сессия слетела посреди заливки) — молчать нельзя:
+             в базе останется шапка с point_count, которому не соответствуют точки */
+          tail = ` Откат не удался: в базе осталась шапка трека с неполными точками, id ${created.id}. Удалите её вручную.`;
+        }
+      }
+      say('msg', 'Не записалось. ' + e.message + tail, 'err');
       return;
     }
 
@@ -1123,13 +1147,13 @@ async function signIn(email, password){
   btn.disabled = true; btn.textContent = 'Вход…';
   try {
     await saveSession(await auth('password', { email, password }));
-    document.getElementById('in-pass').value = '';
     showLogin(false);
     await loadData();
   } catch(e){
     conn('err', 'не вошли');
     say('msg-login', e.message, 'err');
   } finally {
+    document.getElementById('in-pass').value = '';
     btn.disabled = false; btn.textContent = 'Войти';
   }
 }

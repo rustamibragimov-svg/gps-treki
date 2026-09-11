@@ -333,8 +333,8 @@
       <table>
         <thead><tr>
           <th>№</th><th>Водитель</th><th>Адрес</th>
-          <th class="r">План</th><th class="r">Факт</th><th class="r">Отклонение</th>
-          <th class="r">Точность</th><th class="r">Расстояние</th><th>Приезжал</th>
+          <th class="r">План</th><th class="r">Отметка</th><th class="r">Факт по GPS</th>
+          <th class="r">Отклонение</th><th class="r">Точность</th><th class="r">Расстояние</th><th>Приезжал</th>
         </tr></thead>
         <tbody id="tb-stops"></tbody>
       </table>
@@ -641,6 +641,12 @@ const SERV_KEYS = ['serviceseconds','servicedurationseconds','servicedurations',
                    'servicetime','servicetimes','serviceduration','duration','handlingtime',
                    'loadingtime','unloadingtime'];
 const STAT_KEYS = ['status','state','result','статус'];
+/* отметка о приезде, которую поставил сам маршрутизатор — не плановое время */
+const REPORT_KEYS = ['arrivedat','actualarrival','factarrival','arrivedtime','arrivalfact'];
+/* склад и финиш — не клиентские точки: из нумерации их надо убрать,
+   иначе номера разъедутся с тем, что показывает маршрутизатор */
+const TERMINAL_RE = /^(start|finish|end|depot|warehouse|base|склад|старт|финиш)$/;
+const KIND_KEYS = ['type','kind','actiontype','pointtype'];
 
 const low = s => String(s).toLowerCase().replace(/[_\s-]/g,'');
 /* Обход чужого JSON только на чтение: Object.keys даёт собственные ключи, а значения
@@ -741,6 +747,11 @@ function scoreStops(arr, path){
   s += 2 * share(ADDR_KEYS);
   s += 2 * share(TIME_KEYS);
   s += 1 * share(ID_KEYS);
+  /* решающее: массив маршрута несёт плановое время приезда по каждой точке,
+     а справочник заказов — только окно доставки на день */
+  s += 4 * share(TIME_STRONG);
+  s += 2 * share(REPORT_KEYS);
+  if (sample.some(isTerminal)) s += 2;            // старт и финиш бывают только в маршруте
   if (/stop|waypoint|task|order|job|visit|activity|point|остановк|заказ/.test(low(path.join('.')))) s += 2;
   if (arr.length > 500) s -= 3;                 // это уже геометрия маршрута, а не остановки
   if (!geo && !share(ADDR_KEYS)) s -= 2;
@@ -869,9 +880,16 @@ function planExtras(root, stops){
 }
 
 /* канонические остановки — единственное место стыка с чужой структурой */
+const isTerminal = o => {
+  const k = pick(o, KIND_KEYS);
+  return k !== null && TERMINAL_RE.test(low(o[k]));
+};
+
 function buildStops(arr, routeDate, swap){
-  return arr.map((o,i) => {
-    if (!o || typeof o !== 'object') return null;
+  /* склад и финиш выкидываем до нумерации: у маршрутизатора клиентские точки
+     считаются с единицы, и номера должны совпадать с тем, что видит логист */
+  const items = arr.filter(o => o && typeof o === 'object' && !isTerminal(o));
+  return items.map((o,i) => {
     const ll = deepLatLon(o, swap);
     const vIn   = pickBest(o, TIME_STRONG, TIME_WEAK);
     const vOut  = deepPick(o, OUT_KEYS);
@@ -891,6 +909,7 @@ function buildStops(arr, routeDate, swap){
       externalId: textOf(vId),
       plannedArrival: vIn === undefined ? null : readTime(vIn, routeDate),
       plannedDeparture: vOut === undefined ? null : readTime(vOut, routeDate),
+      reportedArrival: (() => { const v = deepPick(o, REPORT_KEYS); return v === undefined ? null : readTime(v, routeDate); })(),
       serviceSeconds: isFinite(serv) ? Math.round(serv > 86400 ? serv/1000 : serv) : null,
       status: textOf(vStat),
       rawTime: rawIn ? rawIn.slice(0, 60) : null,
@@ -932,12 +951,13 @@ const plansOf = trackId => plans.filter(p => p.trackId === trackId);
 async function stopsOf(planId){
   if (stopsCache[planId]) return stopsCache[planId];
   const rows = await api('plan_stops?plan_id=eq.' + pgid(planId) +
-    '&select=seq,label,external_id,address,lat,lon,planned_arrival,planned_departure,service_seconds,status&order=seq.asc&limit=5000');
+    '&select=seq,label,external_id,address,lat,lon,planned_arrival,planned_departure,reported_arrival,service_seconds,status&order=seq.asc&limit=5000');
   stopsCache[planId] = rows.map(r => ({
     seq: r.seq, label: r.label, externalId: r.external_id, address: r.address,
     lat: r.lat === null ? null : +r.lat, lon: r.lon === null ? null : +r.lon,
     plannedArrival: r.planned_arrival ? new Date(r.planned_arrival).toISOString() : null,
     plannedDeparture: r.planned_departure ? new Date(r.planned_departure).toISOString() : null,
+    reportedArrival: r.reported_arrival ? new Date(r.reported_arrival).toISOString() : null,
     serviceSeconds: r.service_seconds, status: r.status
   }));
   return stopsCache[planId];
@@ -1222,6 +1242,7 @@ async function savePlan(head, stops, rawJson, replaceId, extras){
           plan_id: created.id, seq: s.seq, label: s.label, external_id: s.externalId,
           address: s.address, lat: s.lat, lon: s.lon,
           planned_arrival: s.plannedArrival, planned_departure: s.plannedDeparture,
+          reported_arrival: s.reportedArrival,
           service_seconds: s.serviceSeconds, status: s.status
         }));
         for (let i = 0; i < payload.length; i += BATCH)
@@ -1773,6 +1794,7 @@ function renderStops(rows, ctx){
       <td class="who">${esc(r.driver)}</td>
       <td class="who" title="${esc(s.address || s.label || '')}">${esc(s.address || s.label || '—')}</td>
       <td class="num r">${s.plannedArrival ? hhmm(s.plannedArrival) : '—'}</td>
+      <td class="num r dim" title="Отметка о приезде в самом маршрутизаторе">${s.reportedArrival ? hhmm(s.reportedArrival) : '—'}</td>
       <td class="num r">${found ? hhmm(r.t) : '—'}</td>
       <td class="num r">${dev === null ? '—' : signed(dev, 'мин')}</td>
       <td class="num r dim">${blind === null ? '—' : (blind ? '±' + blind + ' мин' : 'точно')}</td>
@@ -1994,18 +2016,20 @@ function csvPoints(){
 function csvStops(){
   if (!lastPlanFact.length){ say('msg','Нет плановых остановок: загрузите план с JSON.','err'); return; }
   toCSV(
-    ['водитель','номер_точки','адрес','план_время','факт_время','отклонение_мин','точность_мин','расстояние_м','приезжал','широта','долгота'],
+    ['водитель','номер_точки','адрес','план_время','отметка_в_системе','факт_gps','отклонение_мин','точность_мин','расстояние_м','приезжал','широта','долгота'],
     lastPlanFact.map(r => {
       const s = r.stop, found = r.i !== null;
       const dev = found ? devMin(s.plannedArrival, r.t) : null;
       return [
         r.driver, s.seq, s.address || s.label || '',
         s.plannedArrival ? hhmm(s.plannedArrival) : '',
+        s.reportedArrival ? hhmm(s.reportedArrival) : '',
         found ? hhmm(r.t) : '',
         dev === null ? '' : Math.round(dev),
         found ? Math.round(r.gapBefore/60) : '',
         found ? Math.round(r.distM) : (r.nearestM === null ? '' : Math.round(r.nearestM)),
-        found ? 'да' : (s.lat === null ? 'нет координат' : 'нет'),
+        found ? (r.outOfOrder ? 'да, вне очереди' : 'да') + (r.driveBy ? ', без остановки' : '')
+              : (s.lat === null ? 'нет координат' : 'нет'),
         s.lat === null ? '' : s.lat.toFixed(7),
         s.lon === null ? '' : s.lon.toFixed(7)
       ];

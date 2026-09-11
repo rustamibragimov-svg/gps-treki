@@ -154,8 +154,8 @@
   .legend{display:flex;gap:14px;align-items:center;font-size:11.5px;color:var(--ink-2);padding:7px 20px;
     background:var(--panel);border-bottom:1px solid var(--line-soft)}
   .legend i{display:inline-block;font-style:normal}
-  .legend .l-plan::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
-    border-top:2px dashed #111827;margin-right:6px}
+  .legend .l-plan::before{content:"";display:inline-block;width:12px;height:12px;vertical-align:middle;
+    background:#111827;border-radius:3px;margin-right:6px}
   .legend .l-fact::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
     border-top:3px solid var(--signal);margin-right:6px}
   .legend .l-gap::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
@@ -314,9 +314,9 @@
     <div id="map"></div>
     <div class="tilewarn" id="tilewarn">Подложка карты не загрузилась. Точки и трек показаны.</div>
     <div class="legend">
-      <label class="chk2"><input type="checkbox" id="ly-plan" checked><i class="l-plan">план: тёмные квадраты, пунктир</i></label>
-      <label class="chk2"><input type="checkbox" id="ly-fact" checked><i class="l-fact">факт: цветные кружки стоянок по порядку</i></label>
-      <label class="chk2"><input type="checkbox" id="ly-gap" checked><i class="l-gap">разрывы: прямая через дыру в треке, не поездка</i></label>
+      <label class="chk2"><input type="checkbox" id="ly-plan" checked><i class="l-plan">план: тёмные квадраты с номерами</i></label>
+      <label class="chk2"><input type="checkbox" id="ly-fact" checked><i class="l-fact">факт: трек и кружки стоянок по порядку</i></label>
+      <label class="chk2"><input type="checkbox" id="ly-gap" checked><i class="l-gap">разрывы: трекер молчал, а машина уехала — путь выдуман</i></label>
       <i class="dim">белый номер в красной рамке — на эту точку водитель не приезжал</i>
     </div>
 
@@ -391,6 +391,10 @@ const MAX_STOPS  = 2000;
 const MATCH_RADIUS_M = 100;            // радиус, в котором точка засчитывается за приезд
 const MAX_RAW_BYTES  = 2 * 1024 * 1024; // предел на исходник, который кладём в route_plans.raw
 const MIN_PAUSE_MIN  = 1;              // короче этой паузы точки в таблицу и на карту не идут
+/* Длинная пауза сама по себе не разрыв. Если машина осталась на месте — это стоянка,
+   и мы знаем, где водитель был. Разрыв — когда трекер молчал, а машина уехала: вот там
+   прямая линия и есть выдумка. */
+const GAP_MIN_M = 250;
 
 /* ============ хранилище (только этот браузер) ============ */
 /* Только localStorage. Прежняя ветка через window.storage убрана: здесь лежат
@@ -1403,11 +1407,13 @@ function computeTrack(pts, g){
     const prev = i ? pts[i-1] : null;
     const dt = prev ? (new Date(p.t) - new Date(prev.t))/1000 : 0;
     const ds = prev ? haversine(prev, p) : 0;
-    const isGap = !!prev && dt > g;
+    const longPause = !!prev && dt > g;
+    const isGap   = longPause && ds > GAP_MIN_M;   // молчал и при этом уехал — путь неизвестен
+    const isDwell = longPause && !isGap;           // молчал, но остался на месте — стоянка
     cum += ds; totalM += ds;
     if (isGap){ gaps++; gapM += ds; if (dt > maxGap) maxGap = dt; }
-    else if (prev) coveredSec += dt;
-    rows.push({ n: i+1, p, dt, ds, cum, isGap });
+    else if (prev) coveredSec += dt;               // стоянка — тоже покрытое время: мы знаем, где он был
+    rows.push({ n: i+1, p, dt, ds, cum, isGap, isDwell });
   });
   const spanSec = pts.length > 1 ? (new Date(pts[pts.length-1].t) - new Date(pts[0].t))/1000 : 0;
   return { rows, totalM, gapM, gaps, maxGap, coveredSec, spanSec,
@@ -1519,7 +1525,9 @@ function drawFact(rec, c, bounds, keep){
       `<b>${esc(rec.driver)}</b><br>стоянка №${stop}${first?' · старт':last?' · финиш':''}<br>` +
       `${hhmmss(p.t)} · точка №${r.n}<br>` +
       `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>пробег ${km(r.cum)} км` +
-      (r.dt ? '<br>стоял ' + dur(r.dt) : '') + (r.isGap ? ' · это разрыв трека, а не стоянка' : ''),
+      (r.dt ? '<br>' + (r.isGap
+        ? 'трекер молчал ' + dur(r.dt) + ', за это время машина ушла на ' + Math.round(r.ds) + ' м — как ехал, неизвестно'
+        : 'стоял ' + dur(r.dt)) : ''),
       { className:'gps', direction:'top', offset:[0,-12] }
     ).addTo(factLayer);
     markers.push({ key: rec.id+'-'+i, m, on: () => hot(m, true), off: () => hot(m, false) });
@@ -1556,13 +1564,9 @@ function drawPlan(rows, bounds, routes){
     line.forEach(pt => bounds.push(pt));
   });
 
-  /* линия строится по каждому плану отдельно: иначе пунктир соединит
-     последнюю точку одного водителя с первой точкой другого */
-  const lines = {};
   rows.forEach(r => {
     const s = r.stop;
     if (s.lat === null || s.lon === null) return;
-    (lines[r.planId] ||= []).push([s.lat, s.lon]);
     bounds.push([s.lat, s.lon]);
 
     const found = r.i !== null;
@@ -1589,12 +1593,6 @@ function drawPlan(rows, bounds, routes){
     }).addTo(planLayer);
   });
 
-  Object.keys(lines).forEach(planId => {
-    const line = lines[planId];
-    if (line.length > 1 && !(routes && routes[planId])) L.polyline(line, {
-      color: PLAN_COLOR, weight: 2, opacity: .75, dashArray: '7,5'
-    }).addTo(planLayer);
-  });
 }
 
 /* ============ сборка всего ============ */

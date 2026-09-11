@@ -170,6 +170,13 @@
   label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);margin:7px 0 9px}
   label.chk input{width:auto}
   .prevtab{margin-bottom:10px}
+  details.fields{margin:0 0 10px}
+  details.fields summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
+  .fieldlist{max-height:210px;overflow:auto;margin-top:6px;border:1px solid var(--line-soft);border-radius:3px;background:#fff}
+  .fieldlist div{display:flex;gap:8px;padding:2px 7px;border-bottom:1px solid var(--line-soft);font-size:11px}
+  .fieldlist div:last-child{border-bottom:0}
+  .fieldlist code{font-size:11px;color:var(--signal);white-space:nowrap}
+  .fieldlist span{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .prevtab th{position:static;padding:4px 6px;font-size:11px;background:none}
   .prevtab td{padding:3px 6px;font-size:11.5px;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis}
 
@@ -601,13 +608,23 @@ function parseTrack(raw){
 const LAT_KEYS  = ['lat','latitude','широта'];
 const LON_KEYS  = ['lon','lng','long','longitude','долгота'];
 const GEO_KEYS  = ['coordinates','coords','point','location','position','geo','latlng'];
-const TIME_KEYS = ['plannedarrival','arrivaltime','arrival','planarrival','eta','estimatedarrival',
-                   'timefrom','starttime','begin','from','planneddate','time','datetime'];
+/* Сильные имена ищем первыми по всей глубине, слабые — только если сильных нет.
+   Иначе generic-ключ вроде «time» или «id» перебьёт настоящее плановое время. */
+const TIME_STRONG = ['plannedarrival','arrivaltime','arrival','planarrival','eta','estimatedarrival',
+                     'arrivalat','planneddate','plantime','arrivaldate'];
+const TIME_WEAK   = ['timefrom','starttime','begin','from','start','time','datetime'];
+const TIME_KEYS   = TIME_STRONG.concat(TIME_WEAK);
 const OUT_KEYS  = ['planneddeparture','departuretime','departure','timeto','endtime','end','to'];
-const ADDR_KEYS = ['address','addressline','fulladdress','addresstext','location','place','adres','адрес'];
-const ID_KEYS   = ['orderid','externalid','order','number','code','id','номер'];
+const ADDR_STRONG = ['address','addressline','fulladdress','addresstext','adres','адрес'];
+const ADDR_WEAK   = ['location','place'];
+const ADDR_KEYS   = ADDR_STRONG.concat(ADDR_WEAK);
+const ID_STRONG = ['orderid','externalid','externalorderid','externalnumber'];
+const ID_WEAK   = ['order','number','code','id','номер'];
+const ID_KEYS   = ID_STRONG.concat(ID_WEAK);
 const NAME_KEYS = ['label','name','title','caption','client','counterparty','наименование'];
-const SERV_KEYS = ['serviceseconds','servicedurationseconds','servicetime','serviceduration','duration','handlingtime'];
+const SERV_KEYS = ['serviceseconds','servicedurationseconds','servicedurations','servicedurationsec',
+                   'servicetime','servicetimes','serviceduration','duration','handlingtime',
+                   'loadingtime','unloadingtime'];
 const STAT_KEYS = ['status','state','result','статус'];
 
 const low = s => String(s).toLowerCase().replace(/[_\s-]/g,'');
@@ -618,6 +635,67 @@ const low = s => String(s).toLowerCase().replace(/[_\s-]/g,'');
 function pick(obj, names){
   for (const k of Object.keys(obj)) if (names.includes(low(k))) return k;
   return null;
+}
+/* Поля остановки лежат не обязательно на верхнем уровне: в реальных ответах это
+   что-нибудь вроде action.order.address.point. Ищем вглубь, но с ограничением и
+   мимо служебных дат — createdAt плановым временем быть не должен. */
+const SKIP_DEEP = /^(createdat|updatedat|deletedat|modifiedat|__v|_id)$/;
+function deepPick(o, names, depth){
+  depth = depth || 0;
+  if (!o || typeof o !== 'object' || Array.isArray(o) || depth > 4) return undefined;
+  const k = pick(o, names);
+  if (k !== null && !SKIP_DEEP.test(low(k))){
+    const v = o[k];
+    /* имя совпало, но внутри ещё объект — например address: { fullAddress, point }.
+       Возвращать надо то, что можно показать, а не контейнер. */
+    if (v && typeof v === 'object' && !Array.isArray(v)){
+      const inner = deepPick(v, names, depth+1);
+      if (inner !== undefined && inner !== null && inner !== '') return inner;
+      const t = textOf(v);
+      if (t !== null) return t;
+    }
+    return v;
+  }
+  for (const key of Object.keys(o)){
+    if (SKIP_DEEP.test(low(key))) continue;
+    const r = deepPick(o[key], names, depth+1);
+    if (r !== undefined && r !== null && r !== '') return r;
+  }
+  return undefined;
+}
+const pickBest = (o, strong, weak) => {
+  const a = deepPick(o, strong);
+  return a !== undefined && a !== null && a !== '' ? a : deepPick(o, weak);
+};
+function deepLatLon(o, swap, depth){
+  depth = depth || 0;
+  if (!o || typeof o !== 'object' || depth > 4) return null;
+  const here = readLatLon(o, swap);
+  if (here) return here;
+  for (const k of Object.keys(o)){
+    if (SKIP_DEEP.test(low(k))) continue;
+    const v = o[k];
+    if (v && typeof v === 'object'){
+      const r = deepLatLon(v, swap, depth+1);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+/* плоский список «путь → значение» для первой остановки: когда автопоиск
+   промахнулся, это единственный способ увидеть, как устроен чужой ответ */
+function flatPaths(o, prefix, out, depth){
+  out = out || []; depth = depth || 0; prefix = prefix || '';
+  if (!o || typeof o !== 'object' || depth > 4 || out.length > 60) return out;
+  for (const k of Object.keys(o)){
+    if (out.length > 60) break;
+    const v = o[k], path = prefix ? prefix + '.' + k : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) flatPaths(v, path, out, depth+1);
+    else if (Array.isArray(v)) out.push([path + '[]', v.length <= 4 ? JSON.stringify(v) : v.length + ' элем.']);
+    else out.push([path, JSON.stringify(v)]);
+  }
+  return out;
 }
 
 /* все массивы объектов в ответе, отсортированные по похожести на список остановок */
@@ -641,8 +719,8 @@ function findStopArrays(root){
 function scoreStops(arr, path){
   const sample = arr.slice(0, 20).filter(x => x && typeof x === 'object');
   if (!sample.length) return 0;
-  const share = names => sample.filter(o => pick(o, names) !== null).length / sample.length;
-  const geo = sample.filter(o => readLatLon(o) !== null).length / sample.length;
+  const share = names => sample.filter(o => deepPick(o, names) !== undefined).length / sample.length;
+  const geo = sample.filter(o => deepLatLon(o) !== null).length / sample.length;
   let s = 0;
   s += 4 * geo;
   s += 2 * share(ADDR_KEYS);
@@ -700,9 +778,13 @@ function textOf(v){
   if (v == null) return null;
   if (typeof v === 'string') return v.trim().slice(0, 500) || null;
   if (typeof v === 'number') return String(v);
-  if (typeof v === 'object'){
-    for (const k of ['address','text','value','name','title','full','line'])
-      if (typeof v[k] === 'string') return v[k].trim().slice(0, 500) || null;
+  if (typeof v === 'object' && !Array.isArray(v)){
+    const k = pick(v, ADDR_STRONG.concat(
+      ['text','value','name','title','full','line','formatted','formattedaddress','displayname','label']));
+    if (k !== null && typeof v[k] === 'string' && v[k].trim()) return v[k].trim().slice(0, 500);
+    /* внутри ровно одна строка — она и есть то, что хотели показать */
+    const strs = Object.keys(v).filter(x => typeof v[x] === 'string' && v[x].trim());
+    if (strs.length === 1) return v[strs[0]].trim().slice(0, 500);
   }
   return null;
 }
@@ -711,24 +793,30 @@ function textOf(v){
 function buildStops(arr, routeDate, swap){
   return arr.map((o,i) => {
     if (!o || typeof o !== 'object') return null;
-    const ll = readLatLon(o, swap);
-    const kAddr = pick(o, ADDR_KEYS), kName = pick(o, NAME_KEYS), kId = pick(o, ID_KEYS);
-    const kIn = pick(o, TIME_KEYS), kOut = pick(o, OUT_KEYS), kServ = pick(o, SERV_KEYS), kStat = pick(o, STAT_KEYS);
-    const serv = kServ ? Number(o[kServ]) : NaN;
+    const ll = deepLatLon(o, swap);
+    const vIn   = pickBest(o, TIME_STRONG, TIME_WEAK);
+    const vOut  = deepPick(o, OUT_KEYS);
+    const vAddr = pickBest(o, ADDR_STRONG, ADDR_WEAK);
+    const vId   = pickBest(o, ID_STRONG, ID_WEAK);
+    const vName = deepPick(o, NAME_KEYS);
+    const vServ = deepPick(o, SERV_KEYS);
+    const vStat = deepPick(o, STAT_KEYS);
+    const serv = vServ === undefined ? NaN : Number(vServ);
+    const rawIn = vIn === undefined ? null : JSON.stringify(vIn);
     return {
       seq: i+1,
       lat: ll ? ll.lat : null,
       lon: ll ? ll.lon : null,
-      address: kAddr ? textOf(o[kAddr]) : null,
-      label: kName ? textOf(o[kName]) : null,
-      externalId: kId ? textOf(o[kId]) : null,
-      plannedArrival: kIn ? readTime(o[kIn], routeDate) : null,
-      plannedDeparture: kOut ? readTime(o[kOut], routeDate) : null,
+      address: textOf(vAddr),
+      label: textOf(vName),
+      externalId: textOf(vId),
+      plannedArrival: vIn === undefined ? null : readTime(vIn, routeDate),
+      plannedDeparture: vOut === undefined ? null : readTime(vOut, routeDate),
       serviceSeconds: isFinite(serv) ? Math.round(serv > 86400 ? serv/1000 : serv) : null,
-      status: kStat ? textOf(o[kStat]) : null,
-      rawTime: kIn ? JSON.stringify(o[kIn]).slice(0, 60) : null,
+      status: textOf(vStat),
+      rawTime: rawIn ? rawIn.slice(0, 60) : null,
       /* «14:30» без зоны — привязано к текущей настройке UTC+, об этом надо предупредить */
-      bareTime: kIn ? /^\s*"?\d{1,2}:\d{2}(:\d{2})?"?\s*$/.test(JSON.stringify(o[kIn])) : false
+      bareTime: rawIn ? /^\s*"?\d{1,2}:\d{2}(:\d{2})?"?\s*$/.test(rawIn) : false
     };
   }).filter(Boolean);
 }
@@ -975,6 +1063,14 @@ function renderPreview(){
       </label>
       <label class="chk"><input type="checkbox" id="pv-swap"${draft.swap ? ' checked' : ''}> поменять широту и долготу</label>
       <table class="prevtab"><thead><tr><th>№</th><th>Адрес</th><th>План</th><th>Координаты</th></tr></thead><tbody>${rows}</tbody></table>
+      <details class="fields"${withGeo && withTime ? '' : ' open'}>
+        <summary>Какие поля есть в первой остановке</summary>
+        <div class="fieldlist">${
+          flatPaths(draft.candidates[draft.ci].arr[0]).map(([p,v]) =>
+            `<div><code>${esc(p)}</code> <span>${esc(String(v).slice(0,70))}</span></div>`).join('')
+          || '<div>в первом элементе нет полей</div>'
+        }</div>
+      </details>
       <div class="btnrow">
         <button class="primary" id="pv-save"${withGeo || st.length ? '' : ' disabled'}>Записать план и остановки</button>
         <button id="pv-cancel">Отмена</button>

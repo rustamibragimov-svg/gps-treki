@@ -1074,6 +1074,30 @@ async function addPlan(){
   await savePlan(head, [], null);
 }
 
+/* Исходный ответ лежит в route_plans.raw, поэтому после доработки парсера план
+   можно пересобрать одной кнопкой — не выгружая 59 кБ из DevTools заново. */
+async function rebuildFromRaw(planId){
+  const p = plans.find(x => x.id === planId);
+  if (!p) return;
+  document.getElementById('planbox').open = true;
+  say('msg-plan', 'Читаю сохранённый JSON…', 'ok');
+  let rows;
+  try { rows = await api('route_plans?id=eq.' + pgid(planId) + '&select=raw'); }
+  catch(e){ say('msg-plan', 'Не прочитался сохранённый JSON. ' + e.message, 'err'); return; }
+  const data = rows && rows[0] && rows[0].raw;
+  if (!data){
+    say('msg-plan', 'У этого плана нет сохранённого исходника: он заведён руками или JSON был слишком большой. Загрузите ответ маршрутизатора заново.', 'err');
+    return;
+  }
+  const head = { driver: p.driver, date: p.date, km: p.km, plate: p.plate || null,
+                 region: p.region || null, ext: p.ext || null };
+  const candidates = findStopArrays(data);
+  if (!candidates.length){ say('msg-plan', 'В сохранённом JSON не нашлось массива остановок.', 'err'); return; }
+  draft = { data, raw: '', head, candidates, ci: 0, swap: false, replaceId: planId };
+  rebuildDraft();
+  say('msg-plan', 'Проверьте, что распознано, и нажмите «Записать план и остановки».', 'ok');
+}
+
 function preparePlan(raw, head){
   if (raw.length > MAX_JSON_BYTES){ say('msg-plan','Файл слишком большой, похоже, скопировано что-то другое.','err'); return; }
   let data;
@@ -1195,8 +1219,9 @@ function renderPreview(){
   document.getElementById('pv-save').addEventListener('click', async () => {
     const d = draft;
     if (!d) return;
-    const dup = plans.find(p => p.driver === d.head.driver && p.date === d.head.date);
-    if (dup && !confirm(`План «${d.head.driver}» за ${dateHuman(d.head.date)} уже есть. Заменить его вместе с остановками?`)) return;
+    const dup = d.replaceId ? plans.find(p => p.id === d.replaceId)
+                            : plans.find(p => p.driver === d.head.driver && p.date === d.head.date);
+    if (dup && !d.replaceId && !confirm(`План «${d.head.driver}» за ${dateHuman(d.head.date)} уже есть. Заменить его вместе с остановками?`)) return;
     draft = null; renderPreview();
     /* старый план удаляется только после того, как новый лёг в базу: иначе обрыв
        между двумя запросами оставил бы день вообще без плана */
@@ -1361,6 +1386,7 @@ function planRowHtml(p, tracksOfDay){
         <b>План · ${esc(p.driver)}</b>
         <span>${bits.join(' · ')}</span>
         <select data-link="${p.id}" aria-label="Связать план с треком">${opts}</select>
+        <button class="tag" data-rebuild="${p.id}" title="Разобрать сохранённый JSON заново — например, после доработки парсера">пересобрать остановки</button>
       </span>
       <button class="quiet" data-delplan="${p.id}" title="Удалить план" aria-label="Удалить план">✕</button>
     </div>`;
@@ -1402,6 +1428,8 @@ function renderList(){
     b.addEventListener('click', e => { e.stopPropagation(); removeTrack(b.dataset.del); }));
   box.querySelectorAll('[data-delplan]').forEach(b =>
     b.addEventListener('click', e => { e.stopPropagation(); removePlan(b.dataset.delplan); }));
+  box.querySelectorAll('[data-rebuild]').forEach(b =>
+    b.addEventListener('click', e => { e.stopPropagation(); rebuildFromRaw(b.dataset.rebuild); }));
   box.querySelectorAll('[data-link]').forEach(s =>
     s.addEventListener('change', e => { e.stopPropagation(); linkPlan(s.dataset.link, s.value); }));
   box.querySelectorAll('[data-reg]').forEach(b =>

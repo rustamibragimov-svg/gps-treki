@@ -361,6 +361,7 @@ const NO_REGION = 'Регион не указан';
 const PLAN_COLOR = '#111827';          // план — один цвет на всех, факт остаётся цветным
 const MAX_STOPS  = 2000;
 const MATCH_RADIUS_M = 100;            // радиус, в котором точка засчитывается за приезд
+const MAX_RAW_BYTES  = 2 * 1024 * 1024; // предел на исходник, который кладём в route_plans.raw
 const MIN_PAUSE_MIN  = 1;              // короче этой паузы точки в таблицу и на карту не идут
 
 /* ============ хранилище (только этот браузер) ============ */
@@ -591,12 +592,13 @@ const SERV_KEYS = ['serviceseconds','servicedurationseconds','servicetime','serv
 const STAT_KEYS = ['status','state','result','статус'];
 
 const low = s => String(s).toLowerCase().replace(/[_\s-]/g,'');
+/* Обход чужого JSON только на чтение: Object.keys даёт собственные ключи, а значения
+   никуда не присваиваются. Ключ «__proto__» из JSON.parse — обычное поле, не акцессор.
+   Если когда-нибудь захочется упростить buildStops до {...o} — вот здесь и появится
+   прототипное загрязнение, которого сейчас нет. */
 function pick(obj, names){
   for (const k of Object.keys(obj)) if (names.includes(low(k))) return k;
   return null;
-}
-function deepGet(obj, path){
-  return path.reduce((o,k) => (o == null ? o : o[k]), obj);
 }
 
 /* все массивы объектов в ответе, отсортированные по похожести на список остановок */
@@ -705,7 +707,9 @@ function buildStops(arr, routeDate, swap){
       plannedDeparture: kOut ? readTime(o[kOut], routeDate) : null,
       serviceSeconds: isFinite(serv) ? Math.round(serv > 86400 ? serv/1000 : serv) : null,
       status: kStat ? textOf(o[kStat]) : null,
-      rawTime: kIn ? JSON.stringify(o[kIn]).slice(0, 60) : null
+      rawTime: kIn ? JSON.stringify(o[kIn]).slice(0, 60) : null,
+      /* «14:30» без зоны — привязано к текущей настройке UTC+, об этом надо предупредить */
+      bareTime: kIn ? /^\s*"?\d{1,2}:\d{2}(:\d{2})?"?\s*$/.test(JSON.stringify(o[kIn])) : false
     };
   }).filter(Boolean);
 }
@@ -880,9 +884,10 @@ function preparePlan(raw, head){
 
 function rebuildDraft(){
   const c = draft.candidates[draft.ci];
-  draft.stops = buildStops(c.arr, draft.head.date, draft.swap).slice(0, MAX_STOPS);
+  draft.cut = Math.max(0, c.arr.length - MAX_STOPS);
+  draft.stops = buildStops(c.arr.slice(0, MAX_STOPS), draft.head.date, draft.swap);
   draft.track = index.find(t => t.driver === draft.head.driver && t.date === draft.head.date) || null;
-  draft.sanity = null;
+  draft.sanity = null; draft.sanityError = '';
   renderPreview();
   if (draft.track) checkAgainstTrack();       // асинхронно дорисует санитарную проверку
 }
@@ -891,10 +896,19 @@ function rebuildDraft(){
 async function checkAgainstTrack(){
   const want = draft.track.id;
   let pts;
-  try { pts = await points(want); } catch(e){ return; }
+  try { pts = await points(want); }
+  catch(e){
+    if (draft){ draft.sanityError = 'Трек для сверки не прочитался (' + e.message + '), поэтому проверить координаты не с чем.'; renderPreview(); }
+    return;
+  }
   if (!draft || !draft.track || draft.track.id !== want) return;
-  const ds = draft.stops.filter(s => s.lat !== null)
-    .map(s => Math.min.apply(null, pts.map(p => haversine(s, p))));
+
+  /* это санитарная проверка порядка координат, а не измерение: точности
+     выборки хватает, а полный перебор на больших треках вешает вкладку */
+  const step = Math.max(1, Math.ceil(pts.length / 1500));
+  const sample = pts.filter((_,i) => i % step === 0);
+  const ds = draft.stops.filter(s => s.lat !== null).slice(0, 300)
+    .map(s => Math.min.apply(null, sample.map(p => haversine(s, p))));
   if (!ds.length) return;
   ds.sort((a,b) => a-b);
   draft.sanity = { median: ds[Math.floor(ds.length/2)], n: ds.length };
@@ -913,8 +927,12 @@ function renderPreview(){
   if (!st.length) warn.push('Остановок не распознано.');
   if (!withGeo) warn.push('Ни у одной остановки нет координат — точки на карте и сверка по ним не получатся, останется только шапка.');
   if (!withTime) warn.push('Планового времени нет — отклонения посчитать будет не из чего.');
+  if (draft.cut) warn.push(`В массиве ${st.length + draft.cut} элементов, записаны будут первые ${st.length}. Столько остановок в маршруте не бывает — похоже, выбран не тот массив.`);
+  if (draft.sanityError) warn.push(draft.sanityError);
   if (draft.sanity && draft.sanity.median > 3000)
     warn.push(`Плановые точки в среднем в ${(draft.sanity.median/1000).toFixed(1)} км от трека. Скорее всего, перепутаны широта и долгота — поставьте галку ниже.`);
+  if (st.some(s => s.bareTime))
+    warn.push(`Время в плане без часового пояса — считаем его местным по текущей настройке UTC+${tz()}. Если потом поменять смещение в шапке, у этого плана оно уже не пересчитается.`);
 
   const rows = st.slice(0, 3).map(s => `<tr>
       <td class="num r">${s.seq}</td>
@@ -952,23 +970,27 @@ function renderPreview(){
     if (!d) return;
     const dup = plans.find(p => p.driver === d.head.driver && p.date === d.head.date);
     if (dup && !confirm(`План «${d.head.driver}» за ${dateHuman(d.head.date)} уже есть. Заменить его вместе с остановками?`)) return;
-    if (dup){
-      try { await api('route_plans?id=eq.' + pgid(dup.id), { method:'DELETE' }); }
-      catch(e){ say('msg-plan','Старый план не удалился, новый не записан. ' + e.message, 'err'); return; }
-      delete stopsCache[dup.id];
-    }
     draft = null; renderPreview();
-    await savePlan(d.head, d.stops, d.data);
+    /* старый план удаляется только после того, как новый лёг в базу: иначе обрыв
+       между двумя запросами оставил бы день вообще без плана */
+    await savePlan(d.head, d.stops, d.data, dup ? dup.id : null);
   });
 }
 
-async function savePlan(head, stops, rawJson){
+async function savePlan(head, stops, rawJson, replaceId){
   const btn = document.getElementById('btn-addplan');
   btn.disabled = true; btn.textContent = 'Запись…';
   try {
     const track = index.filter(t => t.driver === head.driver && t.date === head.date);
     const firstT = stops.map(s => s.plannedArrival).filter(Boolean).sort()[0] || null;
     const lastT  = stops.map(s => s.plannedDeparture || s.plannedArrival).filter(Boolean).sort().pop() || null;
+
+    /* исходник кладём в raw целиком, но не любой ценой: гигантский ответ раздувает таблицу */
+    let rawToStore = rawJson, rawNote = '';
+    if (rawJson){
+      const asText = JSON.stringify(rawJson);
+      if (asText.length > MAX_RAW_BYTES){ rawToStore = null; rawNote = ' · исходный JSON не сохранён, слишком большой'; }
+    }
 
     let created = null;
     try {
@@ -981,7 +1003,7 @@ async function savePlan(head, stops, rawJson){
           planned_start: firstT, planned_end: lastT,
           track_id: track.length === 1 ? track[0].id : null,
           stop_count: stops.length,
-          raw: rawJson
+          raw: rawToStore
         }])
       });
       created = ins[0];
@@ -1006,13 +1028,21 @@ async function savePlan(head, stops, rawJson){
       return;
     }
 
+    /* новый план в базе — теперь можно убрать старый */
+    let replaceNote = '';
+    if (replaceId){
+      try { await api('route_plans?id=eq.' + pgid(replaceId), { method:'DELETE' }); delete stopsCache[replaceId]; }
+      catch(e){ replaceNote = ' · старый план удалить не удалось, за этот день их теперь два — лишний удалите вручную'; }
+    }
+
     ['p-km','p-ext','p-json'].forEach(id => document.getElementById(id).value = '');
     const tail = track.length === 1 ? ' · связан с треком'
                : track.length  >  1 ? ' · треков за этот день несколько, свяжите вручную'
                : ' · трека за этот день пока нет, свяжется при загрузке';
     try { await refresh(false); }
     catch(e){ say('msg-plan', 'План записан, но список не перечитался. ' + e.message, 'err'); return; }
-    say('msg-plan', `План записан${stops.length ? ', остановок ' + stops.length : ''}` + tail, 'ok');
+    say('msg-plan', `План записан${stops.length ? ', остановок ' + stops.length : ''}` + tail + rawNote + replaceNote,
+        replaceNote ? 'err' : 'ok');
   } finally {
     btn.disabled = false; btn.textContent = 'Добавить план';
   }
@@ -1188,26 +1218,28 @@ function matchStops(stops, pts, radiusM){
   let from = 0;
   return stops.map(s => {
     const res = { stop: s, i: null, distM: null, nearestM: null, t: null,
-                  gapBefore: 0, gapAfter: 0, reused: false };
+                  gapBefore: 0, reused: false };
     if (s.lat === null || s.lon === null || !pts.length) return res;
-
-    let nearest = Infinity;
-    for (let i = 0; i < pts.length; i++){
-      const d = haversine(s, pts[i]);
-      if (d < nearest) nearest = d;
-    }
-    res.nearestM = nearest;
 
     for (let i = from; i < pts.length; i++){
       const d = haversine(s, pts[i]);
       if (d <= radiusM){
-        res.i = i; res.distM = d; res.t = pts[i].t;
+        res.i = i; res.distM = d; res.nearestM = d; res.t = pts[i].t;
         res.gapBefore = i > 0 ? (new Date(pts[i].t) - new Date(pts[i-1].t))/1000 : 0;
-        res.gapAfter  = i < pts.length-1 ? (new Date(pts[i+1].t) - new Date(pts[i].t))/1000 : 0;
         res.reused = i === from && from > 0;
         from = i;                    /* следующую остановку ищем не раньше этой точки */
         break;
       }
+    }
+    /* полный проход только для ненайденных: там расстояние до ближайшей точки —
+       единственное, что объясняет пользователю, пропуск это или дыра в треке */
+    if (res.i === null){
+      let nearest = Infinity;
+      for (let i = 0; i < pts.length; i++){
+        const d = haversine(s, pts[i]);
+        if (d < nearest) nearest = d;
+      }
+      res.nearestM = nearest;
     }
     return res;
   });
@@ -1266,11 +1298,13 @@ function drawFact(rec, c, bounds, keep){
 /* План: пронумерованные точки в плановом порядке, соединённые пунктиром.
    Один цвет на все планы, форма тоже другая — с факт-треком не спутать. */
 function drawPlan(rows, bounds){
-  const line = [];
+  /* линия строится по каждому плану отдельно: иначе пунктир соединит
+     последнюю точку одного водителя с первой точкой другого */
+  const lines = {};
   rows.forEach(r => {
     const s = r.stop;
     if (s.lat === null || s.lon === null) return;
-    line.push([s.lat, s.lon]);
+    (lines[r.planId] ||= []).push([s.lat, s.lon]);
     bounds.push([s.lat, s.lon]);
 
     const found = r.i !== null;
@@ -1297,9 +1331,11 @@ function drawPlan(rows, bounds){
     }).addTo(planLayer);
   });
 
-  if (line.length > 1) L.polyline(line, {
-    color: PLAN_COLOR, weight: 2, opacity: .75, dashArray: '7,5'
-  }).addTo(planLayer);
+  Object.values(lines).forEach(line => {
+    if (line.length > 1) L.polyline(line, {
+      color: PLAN_COLOR, weight: 2, opacity: .75, dashArray: '7,5'
+    }).addTo(planLayer);
+  });
 }
 
 /* ============ сборка всего ============ */
@@ -1443,7 +1479,8 @@ function renderStops(rows){
       <td class="num r dim">${blind === null ? '—' : (blind ? '±' + blind + ' мин' : 'точно')}</td>
       <td class="num r">${found ? Math.round(r.distM) + ' м'
                                 : (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')}</td>
-      <td>${found ? 'да' : (s.lat === null ? 'нет координат' : 'не найдена')}</td>
+      <td>${found ? (r.reused ? 'да, та же точка, что у предыдущей' : 'да')
+                  : (s.lat === null ? 'нет координат' : 'не найдена')}</td>
     </tr>`;
   }).join('');
 

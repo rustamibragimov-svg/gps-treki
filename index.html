@@ -115,6 +115,8 @@
   .bar .spacer{flex:1}
   .bar .ctl{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
   .bar .ctl input{width:64px;padding:5px 7px;border:1px solid var(--line);border-radius:4px;font:inherit;font-size:13px}
+  .bar .chk3{cursor:pointer}
+  .bar .chk3 input{width:auto;padding:0}
 
   #map{height:40vh;min-height:230px;background:#DFE4E9;border-bottom:1px solid var(--line)}
   .tilewarn{position:absolute;z-index:500;left:10px;bottom:10px;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:4px;padding:6px 9px;font-size:12px;color:var(--ink-2);display:none}
@@ -498,7 +500,7 @@ function pgq(v){
 const pgid = v => encodeURIComponent(String(v));
 
 /* ============ состояние ============ */
-let index = [], plans = [], cache = {}, stopsCache = {}, selected = new Set();
+let index = [], plans = [], cache = {}, stopsCache = {}, routeCache = {}, selected = new Set();
 let map, factLayer, planLayer, markers = [], planMarkers = [];
 let renderSeq = 0;           // защита от наложения рендеров при быстром переключении
 let editingRegion = null;    // id трека, у которого сейчас правят регион
@@ -517,6 +519,7 @@ const tz = () => Number(document.getElementById('in-tz').value) || 0;
 const gapSec = () => Math.max(1, Number(document.getElementById('in-gap').value) || 3) * 60;
 const pauseSec = () => Math.max(0, Number(document.getElementById('in-pause').value) || 0) * 60;
 const radiusM = () => Math.max(10, Number(document.getElementById('in-radius').value) || MATCH_RADIUS_M);
+const anyOrder = () => !!(document.getElementById('in-any') || {}).checked;
 const shifted = iso => new Date(new Date(iso).getTime() + tz()*3600e3);
 const p2 = n => String(n).padStart(2,'0');
 const hhmmss = iso => { const d = shifted(iso); return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds()); };
@@ -611,7 +614,9 @@ const GEO_KEYS  = ['coordinates','coords','point','location','position','geo','l
 /* Сильные имена ищем первыми по всей глубине, слабые — только если сильных нет.
    Иначе generic-ключ вроде «time» или «id» перебьёт настоящее плановое время. */
 const TIME_STRONG = ['plannedarrival','arrivaltime','arrival','planarrival','eta','estimatedarrival',
-                     'arrivalat','planneddate','plantime','arrivaldate'];
+                     'arrivalat','planneddate','plantime','arrivaldate','expectedarrival',
+                     'expectedarrivalat','expectedarrivaltime','plannedat','planarrivalat',
+                     'arriveat','estimatedtimeofarrival','expectedat'];
 const TIME_WEAK   = ['timefrom','starttime','begin','from','start','time','datetime'];
 const TIME_KEYS   = TIME_STRONG.concat(TIME_WEAK);
 const OUT_KEYS  = ['planneddeparture','departuretime','departure','timeto','endtime','end','to'];
@@ -622,6 +627,11 @@ const ID_STRONG = ['orderid','externalid','externalorderid','externalnumber'];
 const ID_WEAK   = ['order','number','code','id','номер'];
 const ID_KEYS   = ID_STRONG.concat(ID_WEAK);
 const NAME_KEYS = ['label','name','title','caption','client','counterparty','наименование'];
+/* шапка маршрута: плановый километраж и геометрия планового пути */
+const DIST_KEYS = ['expecteddistancemeters','planneddistancemeters','distancemeters',
+                   'expecteddistance','planneddistance','totaldistance','distance'];
+const POLY_KEYS = ['expectedgeometrypolyline','geometrypolyline','geometry_polyline',
+                   'overviewpolyline','polyline','encodedpolyline'];
 const SERV_KEYS = ['serviceseconds','servicedurationseconds','servicedurations','servicedurationsec',
                    'servicetime','servicetimes','serviceduration','duration','handlingtime',
                    'loadingtime','unloadingtime'];
@@ -789,6 +799,70 @@ function textOf(v){
   return null;
 }
 
+/* ---- шапка маршрута: километраж и геометрия планового пути ---- */
+/* Плановый маршрут приходит закодированной строкой (тот же формат, что у Google).
+   Расшифровав её, план можно нарисовать по дорогам, а не прямыми между точками. */
+function decodePolyline(str, precision){
+  const factor = Math.pow(10, precision || 5);
+  const out = [];
+  let index = 0, lat = 0, lon = 0;
+  while (index < str.length){
+    let b, shift = 0, result = 0;
+    do {
+      b = str.charCodeAt(index++) - 63;
+      if (isNaN(b) || b < 0) return out;
+      result |= (b & 0x1f) << shift; shift += 5;
+    } while (b >= 0x20 && index <= str.length);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = 0; result = 0;
+    do {
+      b = str.charCodeAt(index++) - 63;
+      if (isNaN(b) || b < 0) return out;
+      result |= (b & 0x1f) << shift; shift += 5;
+    } while (b >= 0x20 && index <= str.length);
+    lon += (result & 1) ? ~(result >> 1) : (result >> 1);
+    const la = lat/factor, lo = lon/factor;
+    if (Math.abs(la) > 90 || Math.abs(lo) > 180) return out;
+    out.push([la, lo]);
+    if (out.length > 50000) return out;
+  }
+  return out;
+}
+
+/* точность кодирования бывает 5 и 6 знаков — выбираем ту, что легла ближе к остановкам */
+function bestPolyline(str, stops){
+  const ref = stops.filter(s => s.lat !== null).slice(0, 30);
+  let best = null;
+  for (const p of [5, 6]){
+    const line = decodePolyline(str, p);
+    if (line.length < 2) continue;
+    let score = 0;
+    if (ref.length){
+      const ds = ref.map(s => Math.min.apply(null,
+        line.filter((_,i) => i % Math.max(1, Math.ceil(line.length/500)) === 0)
+            .map(([la,lo]) => haversine(s, { lat: la, lon: lo }))));
+      ds.sort((a,b) => a-b);
+      score = ds[Math.floor(ds.length/2)];
+    }
+    if (!best || score < best.score) best = { line, precision: p, score };
+  }
+  return best && (!ref.length || best.score < 2000) ? best : null;
+}
+
+function planExtras(root, stops){
+  const out = { km: null, polyline: null, line: null };
+  const d = deepPick(root, DIST_KEYS);
+  const n = d === undefined ? NaN : Number(d);
+  /* в ответе метры, а нам нужны километры; маленькое число — уже километры */
+  if (isFinite(n) && n > 0) out.km = n > 1000 ? +(n/1000).toFixed(2) : +n.toFixed(2);
+  const p = deepPick(root, POLY_KEYS);
+  if (typeof p === 'string' && p.length > 10){
+    const best = bestPolyline(p, stops);
+    if (best){ out.polyline = p; out.line = best.line; }
+  }
+  return out;
+}
+
 /* канонические остановки — единственное место стыка с чужой структурой */
 function buildStops(arr, routeDate, swap){
   return arr.map((o,i) => {
@@ -830,11 +904,12 @@ async function fetchIndex(){
   }));
 }
 async function fetchPlans(){
-  const rows = await api('route_plans?select=id,track_id,driver,plate,region,route_date,external_route_id,planned_distance_km,stop_count&order=route_date.desc,driver.asc');
+  const rows = await api('route_plans?select=id,track_id,driver,plate,region,route_date,external_route_id,planned_distance_km,planned_polyline,stop_count&order=route_date.desc,driver.asc');
   plans = rows.map(r => ({
     id: r.id, trackId: r.track_id, driver: r.driver, plate: r.plate || '', region: r.region || '',
     date: r.route_date, ext: r.external_route_id || '',
     km: r.planned_distance_km === null ? null : Number(r.planned_distance_km),
+    polyline: r.planned_polyline || null,
     stops: r.stop_count || 0
   }));
 }
@@ -994,6 +1069,7 @@ function rebuildDraft(){
   draft.cut = Math.max(0, c.arr.length - MAX_STOPS);
   draft.stops = buildStops(c.arr.slice(0, MAX_STOPS), draft.head.date, draft.swap);
   draft.track = index.find(t => t.driver === draft.head.driver && t.date === draft.head.date) || null;
+  draft.extras = planExtras(draft.data, draft.stops);
   draft.sanity = null; draft.sanityError = '';
   renderPreview();
   if (draft.track) checkAgainstTrack();       // асинхронно дорисует санитарную проверку
@@ -1041,6 +1117,12 @@ function renderPreview(){
   if (st.some(s => s.bareTime))
     warn.push(`Время в плане без часового пояса — считаем его местным по текущей настройке UTC+${tz()}. Если потом поменять смещение в шапке, у этого плана оно уже не пересчитается.`);
 
+  /* одно и то же время у всех остановок — это окно обслуживания на день,
+     а не плановый приезд. Молча считать по нему отклонения нельзя. */
+  const times = st.map(s => s.plannedArrival).filter(Boolean);
+  const same = times.length > 2 && new Set(times).size === 1;
+  if (same) warn.push(`Плановое время у всех ${times.length} остановок одинаковое (${hhmm(times[0])}). Это похоже на окно доставки на весь день, а не на время приезда по точкам: отклонения по нему считать бессмысленно. Посмотрите список полей ниже — возможно, настоящее время приезда лежит в другом поле.`);
+
   const rows = st.slice(0, 3).map(s => `<tr>
       <td class="num r">${s.seq}</td>
       <td class="who">${esc(s.address || s.label || '—')}</td>
@@ -1053,6 +1135,11 @@ function renderPreview(){
     <div class="prev">
       <b>Распознано остановок: ${st.length}</b>
       <div class="prevline">с координатами ${withGeo} · со временем ${withTime} · с адресом ${withAddr}</div>
+      ${draft.extras && draft.extras.km !== null
+        ? `<div class="prevline">плановый пробег из ответа: <b>${draft.extras.km} км</b>${
+             draft.head.km === null ? ' — будет записан' : ' (в поле вписано ' + draft.head.km + ', возьмём его)'}</div>` : ''}
+      ${draft.extras && draft.extras.line
+        ? `<div class="prevline">плановый маршрут по дорогам: ${draft.extras.line.length} точек геометрии — план ляжет по улицам, а не прямыми</div>` : ''}
       ${draft.sanity ? `<div class="prevline">медиана расстояния до трека: ${draft.sanity.median < 1000
           ? Math.round(draft.sanity.median) + ' м' : (draft.sanity.median/1000).toFixed(1) + ' км'}</div>` : ''}
       ${st[0] && st[0].rawTime ? `<div class="prevline">время в исходнике: <code>${esc(st[0].rawTime)}</code> → ${st[0].plannedArrival ? hhmm(st[0].plannedArrival) : 'не разобрано'}</div>` : ''}
@@ -1088,11 +1175,11 @@ function renderPreview(){
     draft = null; renderPreview();
     /* старый план удаляется только после того, как новый лёг в базу: иначе обрыв
        между двумя запросами оставил бы день вообще без плана */
-    await savePlan(d.head, d.stops, d.data, dup ? dup.id : null);
+    await savePlan(d.head, d.stops, d.data, dup ? dup.id : null, d.extras);
   });
 }
 
-async function savePlan(head, stops, rawJson, replaceId){
+async function savePlan(head, stops, rawJson, replaceId, extras){
   const btn = document.getElementById('btn-addplan');
   btn.disabled = true; btn.textContent = 'Запись…';
   try {
@@ -1114,7 +1201,9 @@ async function savePlan(head, stops, rawJson, replaceId){
         body: JSON.stringify([{
           driver: head.driver, plate: head.plate, region: head.region,
           route_date: head.date, external_route_id: head.ext,
-          planned_distance_km: head.km,
+          /* вписанное руками главнее: человек мог знать, что в ответе не то число */
+          planned_distance_km: head.km !== null ? head.km : (extras ? extras.km : null),
+          planned_polyline: extras ? extras.polyline : null,
           planned_start: firstT, planned_end: lastT,
           track_id: track.length === 1 ? track[0].id : null,
           stop_count: stops.length,
@@ -1329,9 +1418,10 @@ function computeTrack(pts, g){
 /* Ищем первую точку в радиусе, но не по всему треку, а начиная с точки, на которой
    сматчилась предыдущая остановка. Иначе проезд мимо будущей остановки по дороге к
    текущей даёт ложное раннее прибытие, а порядок остановок переворачивается. */
-function matchStops(stops, pts, radiusM){
+function matchStops(stops, pts, radiusM, anyOrder){
   let from = 0;
   return stops.map(s => {
+    if (anyOrder) from = 0;      /* водитель ездит не по плановому порядку — ищем по всему треку */
     const res = { stop: s, i: null, distM: null, nearestM: null, t: null,
                   gapBefore: 0, reused: false };
     if (s.lat === null || s.lon === null || !pts.length) return res;
@@ -1456,7 +1546,16 @@ function hot(m, on){
 
 /* План: пронумерованные точки в плановом порядке, соединённые пунктиром.
    Один цвет на все планы, форма тоже другая — с факт-треком не спутать. */
-function drawPlan(rows, bounds){
+function drawPlan(rows, bounds, routes){
+  /* если маршрутизатор прислал геометрию — план идёт по улицам, и прямые
+     между остановками уже не нужны: они врали о пути между точками */
+  Object.keys(routes || {}).forEach(planId => {
+    const line = routes[planId];
+    if (!line || line.length < 2) return;
+    L.polyline(line, { color: PLAN_COLOR, weight: 3, opacity: .55 }).addTo(planLayer);
+    line.forEach(pt => bounds.push(pt));
+  });
+
   /* линия строится по каждому плану отдельно: иначе пунктир соединит
      последнюю точку одного водителя с первой точкой другого */
   const lines = {};
@@ -1490,8 +1589,9 @@ function drawPlan(rows, bounds){
     }).addTo(planLayer);
   });
 
-  Object.values(lines).forEach(line => {
-    if (line.length > 1) L.polyline(line, {
+  Object.keys(lines).forEach(planId => {
+    const line = lines[planId];
+    if (line.length > 1 && !(routes && routes[planId])) L.polyline(line, {
       color: PLAN_COLOR, weight: 2, opacity: .75, dashArray: '7,5'
     }).addTo(planLayer);
   });
@@ -1512,9 +1612,11 @@ async function renderAll(fit){
   }
 
   /* остановки связанных планов — до отрисовки, чтобы карта и таблицы сошлись */
-  const stopsByPlan = {};
+  const stopsByPlan = {}, planRoutes = {};
   for (const { rec } of loaded){
     for (const p of plansOf(rec.id)){
+      if (p.polyline && !routeCache[p.id]) routeCache[p.id] = decodePolyline(p.polyline, 5);
+      if (routeCache[p.id] && routeCache[p.id].length > 1) planRoutes[p.id] = routeCache[p.id];
       if (!p.stops) continue;
       try { stopsByPlan[p.id] = await stopsOf(p.id); }
       catch(e){ say('msg', 'Не прочитались остановки плана. ' + e.message, 'err'); }
@@ -1547,7 +1649,7 @@ async function renderAll(fit){
     for (const p of ps){
       const stops = stopsByPlan[p.id];
       if (!stops || !stops.length) continue;
-      matchStops(stops, pts, radius).forEach(r => {
+      matchStops(stops, pts, radius, anyOrder()).forEach(r => {
         r.key = p.id + '-' + r.stop.seq;
         r.driver = rec.driver;
         r.rec = rec;
@@ -1577,7 +1679,7 @@ async function renderAll(fit){
   }
 
   if (my !== renderSeq) return;
-  if (map) drawPlan(stopRows, bounds);
+  if (map) drawPlan(stopRows, bounds, planRoutes);
   if (map && fit && bounds.length) map.fitBounds(bounds, { padding:[28,28], maxZoom:16 });
 
   pointRows.sort((a,b) => a.p.t < b.p.t ? -1 : a.p.t > b.p.t ? 1 : 0);
@@ -1689,12 +1791,14 @@ function renderStats(list){
     <div class="ctl">UTC+<input type="number" id="in-tz" value="${tzValue}" min="-12" max="14" step="1"></div>
     <div class="ctl">стоянка от <input type="number" id="in-pause" value="${pauseValue}" min="0" step="1"> мин</div>
     <div class="ctl">радиус <input type="number" id="in-radius" value="${radiusValue}" min="10" step="10"> м</div>
-    <div class="ctl">разрыв от <input type="number" id="in-gap" value="${gapValue}" min="1" step="1"> мин</div>`;
+    <div class="ctl">разрыв от <input type="number" id="in-gap" value="${gapValue}" min="1" step="1"> мин</div>
+    <label class="ctl chk3" title="Водитель нередко едет не в плановом порядке. Без галки точка ищется только после предыдущей найденной, с галкой — по всему треку.">
+      <input type="checkbox" id="in-any"${anyValue ? ' checked' : ''}> искать по всему треку</label>`;
   wireSettings();
 }
 
 /* значения контролов живут отдельно: сама панель перерисовывается целиком */
-let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M;
+let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M, anyValue = false;
 let layerOn = {};            // какие слои карты показаны
 function wireSettings(){
   const on = (id, apply, relist) => {
@@ -1709,10 +1813,11 @@ function wireSettings(){
   on('in-gap',    el => { gapValue = Math.max(1, Number(el.value) || 3); });
   on('in-pause',  el => { pauseValue = Math.max(0, Number(el.value) || 0); });
   on('in-radius', el => { radiusValue = Math.max(10, Number(el.value) || MATCH_RADIUS_M); });
+  on('in-any',    el => { anyValue = el.checked; });
 }
 async function saveSettings(){
   await local.set(SET_KEY, JSON.stringify({
-    tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue, layers: layerOn
+    tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue, any: anyValue, layers: layerOn
   }));
 }
 
@@ -2018,6 +2123,7 @@ document.getElementById('btn-csv').addEventListener('click', () => {
       if (isFinite(s.gap)) gapValue = Math.max(1, Number(s.gap));
       if (isFinite(s.pause)) pauseValue = Math.max(0, Number(s.pause));
       if (isFinite(s.radius)) radiusValue = Math.max(10, Number(s.radius));
+      if (typeof s.any === 'boolean') anyValue = s.any;
       if (s.layers && typeof s.layers === 'object') layerOn = s.layers;
     } catch(e){}
   }

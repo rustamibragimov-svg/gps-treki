@@ -70,10 +70,18 @@
   .msg.err{display:block;background:var(--alert-bg);color:var(--alert)}
   .msg.ok{display:block;background:#E8F2F0;color:var(--signal)}
 
-  .daygroup{padding:10px 18px 4px}
-  .dayline{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px}
+  details.daygroup{border-bottom:1px solid var(--line-soft)}
+  details.daygroup > summary{cursor:pointer;padding:9px 18px;list-style-position:outside}
+  details.daygroup > summary:hover{background:#F2F5F7}
+  .dayline{display:inline-flex;align-items:baseline;justify-content:space-between;gap:10px;width:calc(100% - 18px)}
   .dayline b{font-size:13px;font-weight:620}
   .dayline em{font-style:normal;color:var(--ink-2);font-size:12px}
+  .reg{padding:0 18px 8px}
+  .regline{display:flex;align-items:baseline;justify-content:space-between;
+    padding:6px 0 4px;margin-bottom:4px;border-bottom:1px solid var(--line-soft)}
+  .regline b{font-size:11.5px;font-weight:600;color:var(--ink-2)}
+  .regline em{font-style:normal;color:var(--ink-2);font-size:11px}
+  .planrow.nested{margin-left:16px}
   .track{display:flex;align-items:flex-start;gap:9px;padding:7px 8px;border-radius:4px;cursor:pointer;border:1px solid transparent;margin-bottom:2px}
   .track:hover{background:#F2F5F7}
   .track[data-on="1"]{background:#EDF4F3;border-color:#BBD7D4}
@@ -653,8 +661,15 @@ const low = s => String(s).toLowerCase().replace(/[_\s-]/g,'');
    никуда не присваиваются. Ключ «__proto__» из JSON.parse — обычное поле, не акцессор.
    Если когда-нибудь захочется упростить buildStops до {...o} — вот здесь и появится
    прототипное загрязнение, которого сейчас нет. */
+/* Порядок имён в списке — это приоритет. Перебирать надо именно его, а не ключи
+   объекта: рядом с expectedDistanceMeters лежит пустой distanceMeters, и по
+   порядку ключей выигрывал пустой. */
 function pick(obj, names){
-  for (const k of Object.keys(obj)) if (names.includes(low(k))) return k;
+  const keys = Object.keys(obj);
+  for (const n of names){
+    const k = keys.find(x => low(x) === n);
+    if (k !== undefined) return k;
+  }
   return null;
 }
 /* Поля остановки лежат не обязательно на верхнем уровне: в реальных ответах это
@@ -674,8 +689,10 @@ function deepPick(o, names, depth){
       if (inner !== undefined && inner !== null && inner !== '') return inner;
       const t = textOf(v);
       if (t !== null) return t;
+    } else if (v !== null && v !== undefined && v !== ''){
+      return v;
     }
-    return v;
+    /* поле нашлось, но пустое — ищем дальше, а не сдаёмся */
   }
   for (const key of Object.keys(o)){
     if (SKIP_DEEP.test(low(key))) continue;
@@ -1371,7 +1388,7 @@ function trackRowHtml(r){
     </div>`;
 }
 
-function planRowHtml(p, tracksOfDay){
+function planRowHtml(p, tracksOfDay, nested){
   const opts = ['<option value="">— не связан с треком —</option>']
     .concat(tracksOfDay.map(t => `<option value="${t.id}"${t.id === p.trackId ? ' selected' : ''}>${esc(t.driver)} · ${nPoints(t.count)}</option>`))
     .join('');
@@ -1380,10 +1397,10 @@ function planRowHtml(p, tracksOfDay){
   if (p.ext) bits.push(esc(p.ext));
   if (p.region) bits.push(esc(p.region));
   return `
-    <div class="planrow">
+    <div class="planrow${nested ? ' nested' : ''}">
       <span class="dot plan" style="background:${PLAN_COLOR}"></span>
       <span class="who">
-        <b>План · ${esc(p.driver)}</b>
+        <b>${nested ? 'План маршрута' : 'План · ' + esc(p.driver)}</b>
         <span>${bits.join(' · ')}</span>
         <select data-link="${p.id}" aria-label="Связать план с треком">${opts}</select>
         <button class="tag" data-rebuild="${p.id}" title="Разобрать сохранённый JSON заново — например, после доработки парсера">пересобрать остановки</button>
@@ -1399,17 +1416,39 @@ function renderList(){
     box.innerHTML = '<div class="empty"><b>В базе пока пусто</b>Вставьте JSON запроса history — трек запишется в Supabase и появится на карте.</div>';
     return;
   }
-  const byDate = {};
-  index.forEach(r => (byDate[r.date] ||= { tracks:[], plans:[] }).tracks.push(r));
-  plans.forEach(p => ((byDate[p.date] ||= { tracks:[], plans:[] }).plans.push(p)));
+  /* День сворачивается, внутри — регионы, план прижат к своему треку.
+     Плоским списком на три десятка строк ориентироваться невозможно. */
+  const days = {};
+  const day = d => (days[d] ||= { regions: {}, tracks: 0, plans: 0 });
+  const reg = (d, r) => (day(d).regions[r] ||= { tracks: [], orphans: [] });
 
-  box.innerHTML = Object.keys(byDate).sort().reverse().map(date => {
-    const grp = byDate[date];
-    const head = `<div class="dayline"><b>${dateHuman(date)}</b><em>${nTracks(grp.tracks.length)} · ${nPlans(grp.plans.length)}</em></div>`;
-    return `<div class="daygroup">${head}
-      ${grp.tracks.map(trackRowHtml).join('')}
-      ${grp.plans.map(p => planRowHtml(p, grp.tracks)).join('')}
-    </div>`;
+  index.forEach(t => { reg(t.date, t.region || NO_REGION).tracks.push(t); day(t.date).tracks++; });
+  plans.forEach(p => {
+    day(p.date).plans++;
+    const linked = p.trackId && index.some(t => t.id === p.trackId);
+    if (!linked) reg(p.date, p.region || NO_REGION).orphans.push(p);
+  });
+
+  const dates = Object.keys(days).sort().reverse();
+  box.innerHTML = dates.map((date, di) => {
+    const d = days[date];
+    const ofDay = index.filter(t => t.date === date);
+    const names = Object.keys(d.regions).sort((a,b) =>
+      a === NO_REGION ? 1 : b === NO_REGION ? -1 : a.localeCompare(b,'ru'));
+
+    const body = names.map(name => {
+      const g = d.regions[name];
+      const rows = g.tracks.map(t =>
+        trackRowHtml(t) + plansOf(t.id).map(p => planRowHtml(p, ofDay, true)).join('')
+      ).join('') + g.orphans.map(p => planRowHtml(p, ofDay, false)).join('');
+      const n = g.tracks.length + g.orphans.length;
+      return `<div class="reg">
+        <div class="regline"><b>${esc(name)}</b><em>${n}</em></div>${rows}</div>`;
+    }).join('');
+
+    return `<details class="daygroup"${di === 0 ? ' open' : ''}>
+      <summary><span class="dayline"><b>${dateHuman(date)}</b><em>${nTracks(d.tracks)} · ${nPlans(d.plans)}</em></span></summary>
+      ${body}</details>`;
   }).join('');
 
   box.querySelectorAll('.track').forEach(el => {

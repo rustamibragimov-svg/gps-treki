@@ -90,6 +90,7 @@
   .regin{width:120px !important;padding:1px 5px !important;font-size:11.5px !important}
 
   .planrow{display:flex;align-items:flex-start;gap:9px;padding:6px 8px 7px;border-radius:4px;margin-bottom:2px;border:1px dashed var(--line);background:#FAFBFC}
+  .planrow .dot.plan{border-radius:2px;margin-top:4px}
   .planrow .who{flex:1;min-width:0}
   .planrow .who b{display:block;font-weight:560;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .planrow .who span{color:var(--ink-2);font-size:11.5px}
@@ -120,6 +121,40 @@
   .leaflet-container{font:inherit}
   .leaflet-tooltip.gps{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;border-radius:4px;border-color:var(--line);color:var(--ink)}
   .leaflet-tooltip.gps b{font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif;font-size:12px}
+
+  /* план: номер в тёмном кружке, факт остаётся цветными точками — формой тоже не спутать */
+  .planpin{background:none;border:0}
+  .planpin-dot{
+    display:flex;align-items:center;justify-content:center;width:22px;height:22px;
+    border-radius:50%;background:#111827;color:#fff;border:2px solid #fff;
+    font:600 11px/1 ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
+    box-shadow:0 0 0 1px rgba(0,0,0,.25);
+  }
+  .planpin-dot.miss{background:#fff;color:var(--alert);border-color:var(--alert)}
+
+  .legend{display:flex;gap:14px;align-items:center;font-size:11.5px;color:var(--ink-2);padding:7px 20px;
+    background:var(--panel);border-bottom:1px solid var(--line-soft)}
+  .legend i{display:inline-block;font-style:normal}
+  .legend .l-plan::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
+    border-top:2px dashed #111827;margin-right:6px}
+  .legend .l-fact::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
+    border-top:3px solid var(--signal);margin-right:6px}
+  .legend .l-gap::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
+    border-top:2px dashed var(--alert);margin-right:6px}
+
+  #preview{margin-top:10px}
+  .prev{border:1px solid var(--line);border-radius:4px;padding:11px 12px;background:#FAFBFC}
+  .prev > b{font-size:13px}
+  .prevline{font-size:11.5px;color:var(--ink-2);margin-top:3px}
+  .prevline code{background:#EDF1F4;padding:1px 4px;border-radius:3px}
+  .prevwarn{font-size:12px;color:var(--alert);background:var(--alert-bg);border-radius:3px;padding:5px 7px;margin-top:6px}
+  .prev label.f{margin-top:9px}
+  .prev select{width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:4px;font:inherit;font-size:12px;background:#fff;color:var(--ink)}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);margin:7px 0 9px}
+  label.chk input{width:auto}
+  .prevtab{margin-bottom:10px}
+  .prevtab th{position:static;padding:4px 6px;font-size:11px;background:none}
+  .prevtab td{padding:3px 6px;font-size:11.5px;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis}
 
   .tabs{display:flex;gap:2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
   .tablist{display:flex;gap:2px}
@@ -202,7 +237,7 @@
       <details class="cfg" id="planbox">
         <summary>Добавить план (шапка маршрута)</summary>
         <div class="inner">
-          <p class="hint">Пока разбор JSON плана не написан, шапку вбиваем руками: этого хватает, чтобы считать план / факт / Δ по километражу. Остановки появятся, когда разберём ответ маршрутизатора.</p>
+          <p class="hint">Без JSON запишется только шапка: этого хватает на план / факт / Δ по километражу. С JSON появятся остановки — плановые точки на карте и сверка по каждой из них.</p>
           <div class="row2">
             <label class="f"><span>Водитель</span><input type="text" id="p-driver" placeholder="Фамилия Имя" autocomplete="off"></label>
             <label class="f"><span>Дата маршрута</span><input type="date" id="p-date"></label>
@@ -215,10 +250,16 @@
             <label class="f"><span>Плановый пробег, км</span><input type="text" id="p-km" placeholder="34.15" inputmode="decimal" autocomplete="off"></label>
             <label class="f"><span>ID маршрута</span><input type="text" id="p-ext" placeholder="6a9ac12a519e…" autocomplete="off"></label>
           </div>
+          <label class="f"><span>JSON ответа с планом (необязательно)</span>
+            <textarea id="p-json" placeholder="Вставьте ответ запроса с маршрутом — инструмент сам найдёт остановки и покажет, что распознал, до записи в базу."></textarea>
+          </label>
           <div class="btnrow">
             <button class="primary" id="btn-addplan">Добавить план</button>
+            <button id="btn-planfile">Из файла</button>
+            <input type="file" id="p-file" accept=".json,.txt" hidden>
           </div>
           <div class="msg" id="msg-plan"></div>
+          <div id="preview" hidden></div>
         </div>
       </details>
 
@@ -244,17 +285,38 @@
 
     <div id="map"></div>
     <div class="tilewarn" id="tilewarn">Подложка карты не загрузилась. Точки и трек показаны.</div>
+    <div class="legend">
+      <i class="l-plan">план: пронумерованные точки, пунктир</i>
+      <i class="l-fact">факт: цвет трека, кружки на стоянках</i>
+      <i class="l-gap">разрыв трека</i>
+      <i>белый номер в красной рамке — на эту точку водитель не приезжал</i>
+    </div>
 
     <div class="tabs">
       <div class="tablist" role="tablist" aria-label="Таблицы">
-        <button role="tab" id="tab-points" aria-selected="true" aria-controls="pane-points">Точки трека</button>
-        <button role="tab" id="tab-sum" aria-selected="false" aria-controls="pane-sum">Сводка: план / факт</button>
+        <button role="tab" id="tab-stops" aria-selected="true" aria-controls="pane-stops">План / факт по точкам</button>
+        <button role="tab" id="tab-points" aria-selected="false" aria-controls="pane-points">Точки трека</button>
+        <button role="tab" id="tab-sum" aria-selected="false" aria-controls="pane-sum">Сводка за день</button>
       </div>
       <span class="spacer"></span>
       <button class="side-btn" id="btn-csv">Скачать CSV</button>
     </div>
 
-    <div class="tablewrap" id="pane-points" role="tabpanel" aria-labelledby="tab-points">
+    <div class="tablewrap" id="pane-stops" role="tabpanel" aria-labelledby="tab-stops">
+      <div class="note" id="stops-note" style="display:none"></div>
+      <table>
+        <thead><tr>
+          <th>№</th><th>Водитель</th><th>Адрес</th>
+          <th class="r">План</th><th class="r">Факт</th><th class="r">Отклонение</th>
+          <th class="r">Точность</th><th class="r">Расстояние</th><th>Приезжал</th>
+        </tr></thead>
+        <tbody id="tb-stops"></tbody>
+      </table>
+      <div class="tblempty" id="empty-stops">Здесь появится сверка по каждой плановой точке: приезжал ли водитель и насколько опоздал. Нужен план с остановками — загрузите JSON в «Добавить план».</div>
+    </div>
+
+    <div class="tablewrap" id="pane-points" role="tabpanel" aria-labelledby="tab-points" hidden>
+      <div class="note" id="points-note" style="display:none"></div>
       <table>
         <thead><tr>
           <th>№</th><th>Водитель</th><th>Время</th><th>Широта</th><th>Долгота</th>
@@ -296,6 +358,10 @@ const MAX_JSON_BYTES = 25 * 1024 * 1024;
 const MAX_POINTS     = 200000;         // за день реальный трек — сотни точек, не сотни тысяч
 const COLORS   = ['#0F6E6E','#B4531A','#3B5BA5','#7A4E9E','#1F7A3D','#A63D40','#8A6D1F','#186C8C'];
 const NO_REGION = 'Регион не указан';
+const PLAN_COLOR = '#111827';          // план — один цвет на всех, факт остаётся цветным
+const MAX_STOPS  = 2000;
+const MATCH_RADIUS_M = 100;            // радиус, в котором точка засчитывается за приезд
+const MIN_PAUSE_MIN  = 1;              // короче этой паузы точки в таблицу и на карту не идут
 
 /* ============ хранилище (только этот браузер) ============ */
 /* Только localStorage. Прежняя ветка через window.storage убрана: здесь лежат
@@ -405,11 +471,13 @@ function pgq(v){
 const pgid = v => encodeURIComponent(String(v));
 
 /* ============ состояние ============ */
-let index = [], plans = [], cache = {}, selected = new Set();
-let map, factLayer, markers = [];
+let index = [], plans = [], cache = {}, stopsCache = {}, selected = new Set();
+let map, factLayer, planLayer, markers = [], planMarkers = [];
 let renderSeq = 0;           // защита от наложения рендеров при быстром переключении
 let editingRegion = null;    // id трека, у которого сейчас правят регион
 let lastSummary = [];        // строки сводки для CSV
+let lastPlanFact = [];       // строки «план / факт» по остановкам для CSV
+let draft = null;            // разобранный, но ещё не записанный план
 
 /* ============ утилиты ============ */
 const R = 6371008.8, rad = d => d*Math.PI/180;
@@ -420,6 +488,8 @@ function haversine(a,b){
 }
 const tz = () => Number(document.getElementById('in-tz').value) || 0;
 const gapSec = () => Math.max(1, Number(document.getElementById('in-gap').value) || 3) * 60;
+const pauseSec = () => Math.max(0, Number(document.getElementById('in-pause').value) || 0) * 60;
+const radiusM = () => Math.max(10, Number(document.getElementById('in-radius').value) || MATCH_RADIUS_M);
 const shifted = iso => new Date(new Date(iso).getTime() + tz()*3600e3);
 const p2 = n => String(n).padStart(2,'0');
 const hhmmss = iso => { const d = shifted(iso); return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds()); };
@@ -504,6 +574,142 @@ function parseTrack(raw){
   return pts;
 }
 
+/* ============ разбор JSON плана ============ */
+/* Структура ответа маршрутизатора заранее неизвестна, поэтому массив остановок
+   ищем перебором, а результат перед записью показываем человеку. Угадывать молча
+   нельзя: из этих данных считается отчёт по километражу. */
+const LAT_KEYS  = ['lat','latitude','широта'];
+const LON_KEYS  = ['lon','lng','long','longitude','долгота'];
+const GEO_KEYS  = ['coordinates','coords','point','location','position','geo','latlng'];
+const TIME_KEYS = ['plannedarrival','arrivaltime','arrival','planarrival','eta','estimatedarrival',
+                   'timefrom','starttime','begin','from','planneddate','time','datetime'];
+const OUT_KEYS  = ['planneddeparture','departuretime','departure','timeto','endtime','end','to'];
+const ADDR_KEYS = ['address','addressline','fulladdress','addresstext','location','place','adres','адрес'];
+const ID_KEYS   = ['orderid','externalid','order','number','code','id','номер'];
+const NAME_KEYS = ['label','name','title','caption','client','counterparty','наименование'];
+const SERV_KEYS = ['serviceseconds','servicedurationseconds','servicetime','serviceduration','duration','handlingtime'];
+const STAT_KEYS = ['status','state','result','статус'];
+
+const low = s => String(s).toLowerCase().replace(/[_\s-]/g,'');
+function pick(obj, names){
+  for (const k of Object.keys(obj)) if (names.includes(low(k))) return k;
+  return null;
+}
+function deepGet(obj, path){
+  return path.reduce((o,k) => (o == null ? o : o[k]), obj);
+}
+
+/* все массивы объектов в ответе, отсортированные по похожести на список остановок */
+function findStopArrays(root){
+  const out = [];
+  const seen = new Set();
+  (function walk(node, path, depth){
+    if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)){
+      const objs = node.filter(x => x && typeof x === 'object' && !Array.isArray(x));
+      if (objs.length >= 2 && objs.length === node.length) out.push({ path, arr: node, score: scoreStops(node, path) });
+      node.slice(0, 50).forEach((v,i) => walk(v, path.concat(i), depth+1));
+      return;
+    }
+    for (const k of Object.keys(node)) walk(node[k], path.concat(k), depth+1);
+  })(root, [], 0);
+  return out.filter(c => c.score > 0).sort((a,b) => b.score - a.score || a.path.length - b.path.length).slice(0, 6);
+}
+
+function scoreStops(arr, path){
+  const sample = arr.slice(0, 20).filter(x => x && typeof x === 'object');
+  if (!sample.length) return 0;
+  const share = names => sample.filter(o => pick(o, names) !== null).length / sample.length;
+  const geo = sample.filter(o => readLatLon(o) !== null).length / sample.length;
+  let s = 0;
+  s += 4 * geo;
+  s += 2 * share(ADDR_KEYS);
+  s += 2 * share(TIME_KEYS);
+  s += 1 * share(ID_KEYS);
+  if (/stop|waypoint|task|order|job|visit|activity|point|остановк|заказ/.test(low(path.join('.')))) s += 2;
+  if (arr.length > 500) s -= 3;                 // это уже геометрия маршрута, а не остановки
+  if (!geo && !share(ADDR_KEYS)) s -= 2;
+  return s;
+}
+
+/* координаты из объекта: пара полей, либо массив [долгота, широта] как в GeoJSON */
+function readLatLon(o, swap){
+  const kLat = pick(o, LAT_KEYS), kLon = pick(o, LON_KEYS);
+  if (kLat && kLon && isFinite(+o[kLat]) && isFinite(+o[kLon])) return norm(+o[kLat], +o[kLon], swap);
+  const kGeo = pick(o, GEO_KEYS);
+  if (kGeo){
+    const v = o[kGeo];
+    if (Array.isArray(v) && v.length >= 2 && isFinite(+v[0]) && isFinite(+v[1])) return norm(+v[1], +v[0], swap);
+    if (v && typeof v === 'object'){
+      const a = pick(v, LAT_KEYS), b = pick(v, LON_KEYS);
+      if (a && b && isFinite(+v[a]) && isFinite(+v[b])) return norm(+v[a], +v[b], swap);
+    }
+  }
+  return null;
+  function norm(lat, lon, sw){
+    if (sw) { const t = lat; lat = lon; lon = t; }
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    if (!lat && !lon) return null;
+    return { lat, lon };
+  }
+}
+
+/* время: ISO с зоной и без, epoch в секундах и миллисекундах */
+function readTime(v, routeDate){
+  if (v == null || v === '') return null;
+  if (typeof v === 'object') return readTime(v.value ?? v.time ?? v.from ?? v.start, routeDate);
+  if (typeof v === 'number' || /^\d{10,13}$/.test(String(v))){
+    const n = Number(v);
+    const ms = String(Math.trunc(n)).length <= 10 ? n*1000 : n;
+    return isFinite(ms) ? new Date(ms).toISOString() : null;
+  }
+  const s = String(v).trim();
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s) && routeDate){
+    /* «14:30» — местное время дня маршрута, переводим в UTC по тому же смещению */
+    const [h,m,sec] = s.split(':').map(Number);
+    const ms = Date.parse(routeDate + 'T00:00:00Z') + ((h - tz())*3600 + m*60 + (sec||0))*1000;
+    return isFinite(ms) ? new Date(ms).toISOString() : null;
+  }
+  const ms = Date.parse(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z');
+  return isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+function textOf(v){
+  if (v == null) return null;
+  if (typeof v === 'string') return v.trim().slice(0, 500) || null;
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'object'){
+    for (const k of ['address','text','value','name','title','full','line'])
+      if (typeof v[k] === 'string') return v[k].trim().slice(0, 500) || null;
+  }
+  return null;
+}
+
+/* канонические остановки — единственное место стыка с чужой структурой */
+function buildStops(arr, routeDate, swap){
+  return arr.map((o,i) => {
+    if (!o || typeof o !== 'object') return null;
+    const ll = readLatLon(o, swap);
+    const kAddr = pick(o, ADDR_KEYS), kName = pick(o, NAME_KEYS), kId = pick(o, ID_KEYS);
+    const kIn = pick(o, TIME_KEYS), kOut = pick(o, OUT_KEYS), kServ = pick(o, SERV_KEYS), kStat = pick(o, STAT_KEYS);
+    const serv = kServ ? Number(o[kServ]) : NaN;
+    return {
+      seq: i+1,
+      lat: ll ? ll.lat : null,
+      lon: ll ? ll.lon : null,
+      address: kAddr ? textOf(o[kAddr]) : null,
+      label: kName ? textOf(o[kName]) : null,
+      externalId: kId ? textOf(o[kId]) : null,
+      plannedArrival: kIn ? readTime(o[kIn], routeDate) : null,
+      plannedDeparture: kOut ? readTime(o[kOut], routeDate) : null,
+      serviceSeconds: isFinite(serv) ? Math.round(serv > 86400 ? serv/1000 : serv) : null,
+      status: kStat ? textOf(o[kStat]) : null,
+      rawTime: kIn ? JSON.stringify(o[kIn]).slice(0, 60) : null
+    };
+  }).filter(Boolean);
+}
+
 /* ============ чтение из базы ============ */
 async function fetchIndex(){
   const rows = await api('driver_tracks?select=id,driver,plate,region,track_date,point_count&order=track_date.desc,driver.asc');
@@ -531,6 +737,20 @@ async function points(id){
   return cache[id];
 }
 const plansOf = trackId => plans.filter(p => p.trackId === trackId);
+
+async function stopsOf(planId){
+  if (stopsCache[planId]) return stopsCache[planId];
+  const rows = await api('plan_stops?plan_id=eq.' + pgid(planId) +
+    '&select=seq,label,external_id,address,lat,lon,planned_arrival,planned_departure,service_seconds,status&order=seq.asc&limit=5000');
+  stopsCache[planId] = rows.map(r => ({
+    seq: r.seq, label: r.label, externalId: r.external_id, address: r.address,
+    lat: r.lat === null ? null : +r.lat, lon: r.lon === null ? null : +r.lon,
+    plannedArrival: r.planned_arrival ? new Date(r.planned_arrival).toISOString() : null,
+    plannedDeparture: r.planned_departure ? new Date(r.planned_departure).toISOString() : null,
+    serviceSeconds: r.service_seconds, status: r.status
+  }));
+  return stopsCache[planId];
+}
 
 /* ============ запись в базу ============ */
 async function addTrack(raw){
@@ -615,43 +835,184 @@ async function linkOrphanPlans(driver, date, trackId){
   return rows.length;
 }
 
-async function addPlan(){
+function planHeader(){
   const driver = document.getElementById('p-driver').value.trim();
   const date   = document.getElementById('p-date').value;
-  if (!driver){ say('msg-plan','Впишите водителя — по нему план связывается с треком.','err'); return; }
-  if (!date){ say('msg-plan','Укажите дату маршрута.','err'); return; }
-
+  if (!driver){ say('msg-plan','Впишите водителя — по нему план связывается с треком.','err'); return null; }
+  if (!date){ say('msg-plan','Укажите дату маршрута.','err'); return null; }
   const kmVal = numOrNull(document.getElementById('p-km').value);
-  if (Number.isNaN(kmVal)){ say('msg-plan','Плановый пробег — число, например 34.15.','err'); return; }
-  if (kmVal !== null && (kmVal < 0 || kmVal > 5000)){ say('msg-plan','Плановый пробег вне разумного: ожидаются километры, не метры.','err'); return; }
+  if (Number.isNaN(kmVal)){ say('msg-plan','Плановый пробег — число, например 34.15.','err'); return null; }
+  if (kmVal !== null && (kmVal < 0 || kmVal > 5000)){ say('msg-plan','Плановый пробег вне разумного: ожидаются километры, не метры.','err'); return null; }
+  return {
+    driver, date, km: kmVal,
+    plate: document.getElementById('p-plate').value.trim() || null,
+    region: normRegion(document.getElementById('p-region').value),
+    ext: document.getElementById('p-ext').value.trim() || null
+  };
+}
 
-  const dup = plans.find(p => p.driver === driver && p.date === date);
-  if (dup && !confirm(`План «${driver}» за ${dateHuman(date)} уже есть. Плановый километраж в сводке сложится. Добавить ещё один?`)) return;
+/* без JSON — только шапка; с JSON — сначала предпросмотр, запись по кнопке в нём */
+async function addPlan(){
+  const head = planHeader();
+  if (!head) return;
+  const raw = document.getElementById('p-json').value.trim();
+  if (raw) return preparePlan(raw, head);
 
+  const dup = plans.find(p => p.driver === head.driver && p.date === head.date);
+  if (dup && !confirm(`План «${head.driver}» за ${dateHuman(head.date)} уже есть. Плановый километраж в сводке сложится. Добавить ещё один?`)) return;
+  await savePlan(head, [], null);
+}
+
+function preparePlan(raw, head){
+  if (raw.length > MAX_JSON_BYTES){ say('msg-plan','Файл слишком большой, похоже, скопировано что-то другое.','err'); return; }
+  let data;
+  try { data = JSON.parse(raw); }
+  catch(e){ say('msg-plan','Это не JSON. Скопируйте ответ запроса целиком, вместе с внешними фигурными скобками.','err'); return; }
+
+  const candidates = findStopArrays(data);
+  if (!candidates.length){
+    say('msg-plan','В этом JSON не нашлось ничего похожего на список остановок: нужен массив объектов с координатами, адресом или временем. Проверьте, тот ли запрос скопирован.','err');
+    return;
+  }
+  draft = { data, raw, head, candidates, ci: 0, swap: false };
+  rebuildDraft();
+}
+
+function rebuildDraft(){
+  const c = draft.candidates[draft.ci];
+  draft.stops = buildStops(c.arr, draft.head.date, draft.swap).slice(0, MAX_STOPS);
+  draft.track = index.find(t => t.driver === draft.head.driver && t.date === draft.head.date) || null;
+  draft.sanity = null;
+  renderPreview();
+  if (draft.track) checkAgainstTrack();       // асинхронно дорисует санитарную проверку
+}
+
+/* насколько плановые точки вообще ложатся на трек: главная защита от перепутанных координат */
+async function checkAgainstTrack(){
+  const want = draft.track.id;
+  let pts;
+  try { pts = await points(want); } catch(e){ return; }
+  if (!draft || !draft.track || draft.track.id !== want) return;
+  const ds = draft.stops.filter(s => s.lat !== null)
+    .map(s => Math.min.apply(null, pts.map(p => haversine(s, p))));
+  if (!ds.length) return;
+  ds.sort((a,b) => a-b);
+  draft.sanity = { median: ds[Math.floor(ds.length/2)], n: ds.length };
+  renderPreview();
+}
+
+function renderPreview(){
+  const box = document.getElementById('preview');
+  if (!draft){ box.hidden = true; box.innerHTML = ''; return; }
+  const st = draft.stops;
+  const withGeo  = st.filter(s => s.lat !== null).length;
+  const withTime = st.filter(s => s.plannedArrival).length;
+  const withAddr = st.filter(s => s.address || s.label).length;
+
+  const warn = [];
+  if (!st.length) warn.push('Остановок не распознано.');
+  if (!withGeo) warn.push('Ни у одной остановки нет координат — точки на карте и сверка по ним не получатся, останется только шапка.');
+  if (!withTime) warn.push('Планового времени нет — отклонения посчитать будет не из чего.');
+  if (draft.sanity && draft.sanity.median > 3000)
+    warn.push(`Плановые точки в среднем в ${(draft.sanity.median/1000).toFixed(1)} км от трека. Скорее всего, перепутаны широта и долгота — поставьте галку ниже.`);
+
+  const rows = st.slice(0, 3).map(s => `<tr>
+      <td class="num r">${s.seq}</td>
+      <td class="who">${esc(s.address || s.label || '—')}</td>
+      <td class="num">${s.plannedArrival ? hhmm(s.plannedArrival) : '—'}</td>
+      <td class="num">${s.lat === null ? '—' : s.lat.toFixed(5) + ', ' + s.lon.toFixed(5)}</td>
+    </tr>`).join('');
+
+  box.hidden = false;
+  box.innerHTML = `
+    <div class="prev">
+      <b>Распознано остановок: ${st.length}</b>
+      <div class="prevline">с координатами ${withGeo} · со временем ${withTime} · с адресом ${withAddr}</div>
+      ${draft.sanity ? `<div class="prevline">медиана расстояния до трека: ${draft.sanity.median < 1000
+          ? Math.round(draft.sanity.median) + ' м' : (draft.sanity.median/1000).toFixed(1) + ' км'}</div>` : ''}
+      ${st[0] && st[0].rawTime ? `<div class="prevline">время в исходнике: <code>${esc(st[0].rawTime)}</code> → ${st[0].plannedArrival ? hhmm(st[0].plannedArrival) : 'не разобрано'}</div>` : ''}
+      ${warn.map(w => `<div class="prevwarn">${esc(w)}</div>`).join('')}
+      <label class="f"><span>Где лежат остановки</span>
+        <select id="pv-pick">${draft.candidates.map((c,i) =>
+          `<option value="${i}"${i === draft.ci ? ' selected' : ''}>${esc(c.path.join('.') || 'корень')} · ${c.arr.length} шт.</option>`).join('')}</select>
+      </label>
+      <label class="chk"><input type="checkbox" id="pv-swap"${draft.swap ? ' checked' : ''}> поменять широту и долготу</label>
+      <table class="prevtab"><thead><tr><th>№</th><th>Адрес</th><th>План</th><th>Координаты</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="btnrow">
+        <button class="primary" id="pv-save"${withGeo || st.length ? '' : ' disabled'}>Записать план и остановки</button>
+        <button id="pv-cancel">Отмена</button>
+      </div>
+    </div>`;
+
+  document.getElementById('pv-pick').addEventListener('change', e => { draft.ci = +e.target.value; rebuildDraft(); });
+  document.getElementById('pv-swap').addEventListener('change', e => { draft.swap = e.target.checked; rebuildDraft(); });
+  document.getElementById('pv-cancel').addEventListener('click', () => { draft = null; renderPreview(); });
+  document.getElementById('pv-save').addEventListener('click', async () => {
+    const d = draft;
+    if (!d) return;
+    const dup = plans.find(p => p.driver === d.head.driver && p.date === d.head.date);
+    if (dup && !confirm(`План «${d.head.driver}» за ${dateHuman(d.head.date)} уже есть. Заменить его вместе с остановками?`)) return;
+    if (dup){
+      try { await api('route_plans?id=eq.' + pgid(dup.id), { method:'DELETE' }); }
+      catch(e){ say('msg-plan','Старый план не удалился, новый не записан. ' + e.message, 'err'); return; }
+      delete stopsCache[dup.id];
+    }
+    draft = null; renderPreview();
+    await savePlan(d.head, d.stops, d.data);
+  });
+}
+
+async function savePlan(head, stops, rawJson){
   const btn = document.getElementById('btn-addplan');
   btn.disabled = true; btn.textContent = 'Запись…';
   try {
-    const track = index.filter(t => t.driver === driver && t.date === date);
-    const body = {
-      driver,
-      plate: document.getElementById('p-plate').value.trim() || null,
-      region: normRegion(document.getElementById('p-region').value),
-      route_date: date,
-      external_route_id: document.getElementById('p-ext').value.trim() || null,
-      planned_distance_km: kmVal,
-      track_id: track.length === 1 ? track[0].id : null,
-      stop_count: 0
-    };
-    try { await api('route_plans', { method:'POST', body: JSON.stringify([body]) }); }
-    catch(e){ say('msg-plan', 'Не записалось. ' + e.message, 'err'); return; }
+    const track = index.filter(t => t.driver === head.driver && t.date === head.date);
+    const firstT = stops.map(s => s.plannedArrival).filter(Boolean).sort()[0] || null;
+    const lastT  = stops.map(s => s.plannedDeparture || s.plannedArrival).filter(Boolean).sort().pop() || null;
 
-    ['p-km','p-ext'].forEach(id => document.getElementById(id).value = '');
+    let created = null;
+    try {
+      const ins = await api('route_plans', {
+        method:'POST', headers: { 'Prefer': 'return=representation' },
+        body: JSON.stringify([{
+          driver: head.driver, plate: head.plate, region: head.region,
+          route_date: head.date, external_route_id: head.ext,
+          planned_distance_km: head.km,
+          planned_start: firstT, planned_end: lastT,
+          track_id: track.length === 1 ? track[0].id : null,
+          stop_count: stops.length,
+          raw: rawJson
+        }])
+      });
+      created = ins[0];
+
+      if (stops.length){
+        const payload = stops.map(s => ({
+          plan_id: created.id, seq: s.seq, label: s.label, external_id: s.externalId,
+          address: s.address, lat: s.lat, lon: s.lon,
+          planned_arrival: s.plannedArrival, planned_departure: s.plannedDeparture,
+          service_seconds: s.serviceSeconds, status: s.status
+        }));
+        for (let i = 0; i < payload.length; i += BATCH)
+          await api('plan_stops', { method:'POST', body: JSON.stringify(payload.slice(i, i+BATCH)) });
+      }
+    } catch(e){
+      let tail = '';
+      if (created){
+        try { await api('route_plans?id=eq.' + pgid(created.id), { method:'DELETE' }); }
+        catch(_){ tail = ` Откат не удался: в базе осталась шапка плана без остановок, id ${created.id}. Удалите её вручную.`; }
+      }
+      say('msg-plan', 'Не записалось. ' + e.message + tail, 'err');
+      return;
+    }
+
+    ['p-km','p-ext','p-json'].forEach(id => document.getElementById(id).value = '');
     const tail = track.length === 1 ? ' · связан с треком'
                : track.length  >  1 ? ' · треков за этот день несколько, свяжите вручную'
                : ' · трека за этот день пока нет, свяжется при загрузке';
     try { await refresh(false); }
     catch(e){ say('msg-plan', 'План записан, но список не перечитался. ' + e.message, 'err'); return; }
-    say('msg-plan', 'План записан' + tail, 'ok');
+    say('msg-plan', `План записан${stops.length ? ', остановок ' + stops.length : ''}` + tail, 'ok');
   } finally {
     btn.disabled = false; btn.textContent = 'Добавить план';
   }
@@ -693,6 +1054,7 @@ async function removePlan(id){
   if (!p || !confirm(`Удалить план «${p.driver}» за ${dateHuman(p.date)} из базы?`)) return;
   try { await api('route_plans?id=eq.' + pgid(id), { method:'DELETE' }); }
   catch(e){ say('msg-plan', 'Не удалилось. ' + e.message, 'err'); return; }
+  delete stopsCache[id];
   try { await refresh(false); }
   catch(e){ say('msg-plan', 'План удалён, но список не перечитался. ' + e.message, 'err'); }
 }
@@ -729,11 +1091,12 @@ function planRowHtml(p, tracksOfDay){
     .concat(tracksOfDay.map(t => `<option value="${t.id}"${t.id === p.trackId ? ' selected' : ''}>${esc(t.driver)} · ${nPoints(t.count)}</option>`))
     .join('');
   const bits = [p.km !== null ? p.km.toFixed(2) + ' км план' : 'километраж не указан'];
-  if (p.stops) bits.push(p.stops + ' остановок');
+  bits.push(p.stops ? plural(p.stops, ['остановка','остановки','остановок']) : 'без остановок');
   if (p.ext) bits.push(esc(p.ext));
   if (p.region) bits.push(esc(p.region));
   return `
     <div class="planrow">
+      <span class="dot plan" style="background:${PLAN_COLOR}"></span>
       <span class="who">
         <b>План · ${esc(p.driver)}</b>
         <span>${bits.join(' · ')}</span>
@@ -817,6 +1180,39 @@ function computeTrack(pts, g){
            minT: pts.length ? pts[0].t : null, maxT: pts.length ? pts[pts.length-1].t : null };
 }
 
+/* ============ сопоставление остановки с точкой трека ============ */
+/* Ищем первую точку в радиусе, но не по всему треку, а начиная с точки, на которой
+   сматчилась предыдущая остановка. Иначе проезд мимо будущей остановки по дороге к
+   текущей даёт ложное раннее прибытие, а порядок остановок переворачивается. */
+function matchStops(stops, pts, radiusM){
+  let from = 0;
+  return stops.map(s => {
+    const res = { stop: s, i: null, distM: null, nearestM: null, t: null,
+                  gapBefore: 0, gapAfter: 0, reused: false };
+    if (s.lat === null || s.lon === null || !pts.length) return res;
+
+    let nearest = Infinity;
+    for (let i = 0; i < pts.length; i++){
+      const d = haversine(s, pts[i]);
+      if (d < nearest) nearest = d;
+    }
+    res.nearestM = nearest;
+
+    for (let i = from; i < pts.length; i++){
+      const d = haversine(s, pts[i]);
+      if (d <= radiusM){
+        res.i = i; res.distM = d; res.t = pts[i].t;
+        res.gapBefore = i > 0 ? (new Date(pts[i].t) - new Date(pts[i-1].t))/1000 : 0;
+        res.gapAfter  = i < pts.length-1 ? (new Date(pts[i+1].t) - new Date(pts[i].t))/1000 : 0;
+        res.reused = i === from && from > 0;
+        from = i;                    /* следующую остановку ищем не раньше этой точки */
+        break;
+      }
+    }
+    return res;
+  });
+}
+
 /* ============ карта ============ */
 function initMap(){
   /* Leaflet тянется с CDN под проверкой контрольной суммы: если он не пришёл,
@@ -832,23 +1228,15 @@ function initMap(){
   let warned = false;
   tiles.on('tileerror', () => { if (!warned){ warned = true; document.getElementById('tilewarn').style.display = 'block'; } });
   factLayer = L.layerGroup().addTo(map);
+  planLayer = L.layerGroup().addTo(map);
 }
 
-function drawFact(rec, c, bounds){
+/* Линия рисуется по всем точкам — это фактический путь и пробег.
+   Кружки ставятся только там, где водитель стоял: короткие шаги скрыты. */
+function drawFact(rec, c, bounds, keep){
   c.rows.forEach((r,i) => {
-    const p = r.p, first = i === 0, last = i === c.rows.length-1;
+    const p = r.p;
     bounds.push([p.lat, p.lon]);
-    const m = L.circleMarker([p.lat, p.lon], {
-      radius: first||last ? 6 : 4, color: rec.color,
-      weight: first||last ? 2.5 : 1.2,
-      fillColor: first ? '#fff' : rec.color, fillOpacity: first ? 1 : .75
-    }).bindTooltip(
-      `<b>${esc(rec.driver)}</b><br>${hhmmss(p.t)} · №${r.n}${first?' · старт':last?' · финиш':''}<br>` +
-      `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>пробег ${km(r.cum)} км` +
-      (r.isGap ? '<br>пауза ' + dur(r.dt) : ''),
-      { className:'gps', direction:'top', offset:[0,-4] }
-    ).addTo(factLayer);
-    markers.push({ key: rec.id+'-'+i, m });
 
     if (i){
       const prev = c.rows[i-1].p;
@@ -858,7 +1246,60 @@ function drawFact(rec, c, bounds){
         dashArray: r.isGap ? '5,5' : null
       }).addTo(factLayer);
     }
+    if (!keep(r, i, c.rows.length)) return;
+
+    const first = i === 0, last = i === c.rows.length-1;
+    const m = L.circleMarker([p.lat, p.lon], {
+      radius: first||last ? 6 : 4, color: rec.color,
+      weight: first||last ? 2.5 : 1.2,
+      fillColor: first ? '#fff' : rec.color, fillOpacity: first ? 1 : .75
+    }).bindTooltip(
+      `<b>${esc(rec.driver)}</b><br>${hhmmss(p.t)} · №${r.n}${first?' · старт':last?' · финиш':''}<br>` +
+      `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>пробег ${km(r.cum)} км` +
+      (r.dt ? '<br>пауза ' + dur(r.dt) : '') + (r.isGap ? ' · разрыв трека' : ''),
+      { className:'gps', direction:'top', offset:[0,-4] }
+    ).addTo(factLayer);
+    markers.push({ key: rec.id+'-'+i, m });
   });
+}
+
+/* План: пронумерованные точки в плановом порядке, соединённые пунктиром.
+   Один цвет на все планы, форма тоже другая — с факт-треком не спутать. */
+function drawPlan(rows, bounds){
+  const line = [];
+  rows.forEach(r => {
+    const s = r.stop;
+    if (s.lat === null || s.lon === null) return;
+    line.push([s.lat, s.lon]);
+    bounds.push([s.lat, s.lon]);
+
+    const found = r.i !== null;
+    const m = L.marker([s.lat, s.lon], {
+      icon: L.divIcon({
+        className: 'planpin',
+        html: `<span class="planpin-dot${found ? '' : ' miss'}">${s.seq}</span>`,
+        iconSize: [22,22], iconAnchor: [11,11]
+      }),
+      zIndexOffset: 1000
+    }).bindTooltip(
+      `<b>План №${s.seq}${r.driver ? ' · ' + esc(r.driver) : ''}</b><br>` +
+      (s.address ? esc(s.address) + '<br>' : '') +
+      'план ' + (s.plannedArrival ? hhmm(s.plannedArrival) : '—') +
+      ' · факт ' + (found ? hhmm(r.t) : 'не найден') + '<br>' +
+      (found ? 'точка в ' + Math.round(r.distM) + ' м'
+             : 'ближайшая точка в ' + (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')),
+      { className:'gps', direction:'top', offset:[0,-12] }
+    ).addTo(planLayer);
+    planMarkers.push({ key: r.key, m });
+
+    if (found) L.polyline([[s.lat,s.lon],[r.p.lat,r.p.lon]], {
+      color: PLAN_COLOR, weight: 1, opacity: .45, dashArray: '2,3'
+    }).addTo(planLayer);
+  });
+
+  if (line.length > 1) L.polyline(line, {
+    color: PLAN_COLOR, weight: 2, opacity: .75, dashArray: '7,5'
+  }).addTo(planLayer);
 }
 
 /* ============ сборка всего ============ */
@@ -875,10 +1316,23 @@ async function renderAll(fit){
     loaded.push({ rec: index.find(x => x.id === id), pts });
   }
 
-  if (map) factLayer.clearLayers();
-  markers = [];
-  const g = gapSec();
-  const bounds = [], pointRows = [], summary = [];
+  /* остановки связанных планов — до отрисовки, чтобы карта и таблицы сошлись */
+  const stopsByPlan = {};
+  for (const { rec } of loaded){
+    for (const p of plansOf(rec.id)){
+      if (!p.stops) continue;
+      try { stopsByPlan[p.id] = await stopsOf(p.id); }
+      catch(e){ say('msg', 'Не прочитались остановки плана. ' + e.message, 'err'); }
+      if (my !== renderSeq) return;
+    }
+  }
+
+  if (map){ factLayer.clearLayers(); planLayer.clearLayers(); }
+  markers = []; planMarkers = [];
+  const g = gapSec(), pauseS = pauseSec(), radius = radiusM();
+  const keep = (r, i, n) => i === 0 || i === n-1 || r.dt >= pauseS;
+  const bounds = [], pointRows = [], summary = [], stopRows = [];
+  let hiddenPoints = 0;
   let totalM = 0, gapM = 0, gaps = 0, maxGap = 0, coveredSec = 0, spanSec = 0;
   let minT = null, maxT = null, planKm = 0, factCmpKm = 0, cmp = 0, shown = 0, multi = 0, noRegion = 0;
 
@@ -886,10 +1340,27 @@ async function renderAll(fit){
     if (!pts.length) continue;
     shown++;
     const c = computeTrack(pts, g);
-    if (map) drawFact(rec, c, bounds);
-    c.rows.forEach((r,i) => pointRows.push(Object.assign({ key: rec.id+'-'+i, rec }, r)));
+    if (map) drawFact(rec, c, bounds, keep);
+    c.rows.forEach((r,i) => {
+      if (keep(r, i, c.rows.length)) pointRows.push(Object.assign({ key: rec.id+'-'+i, rec }, r));
+      else hiddenPoints++;
+    });
 
     const ps = plansOf(rec.id);
+
+    /* сверка по каждой плановой точке */
+    for (const p of ps){
+      const stops = stopsByPlan[p.id];
+      if (!stops || !stops.length) continue;
+      matchStops(stops, pts, radius).forEach(r => {
+        r.key = p.id + '-' + r.stop.seq;
+        r.driver = rec.driver;
+        r.rec = rec;
+        r.p = r.i === null ? null : pts[r.i];
+        r.planId = p.id;
+        stopRows.push(r);
+      });
+    }
     const pk = ps.reduce((s,p) => s + (p.km || 0), 0);
     /* Δ считается только по трекам, у которых план известен: иначе факт без плана
        уходит в вычитаемое и Δ систематически показывает перерасход */
@@ -911,17 +1382,22 @@ async function renderAll(fit){
   }
 
   if (my !== renderSeq) return;
+  if (map) drawPlan(stopRows, bounds);
   if (map && fit && bounds.length) map.fitBounds(bounds, { padding:[28,28], maxZoom:16 });
 
   pointRows.sort((a,b) => a.p.t < b.p.t ? -1 : a.p.t > b.p.t ? 1 : 0);
-  renderPoints(pointRows);
+  renderPoints(pointRows, hiddenPoints);
+  renderStops(stopRows);
   renderSummary(summary, { multi, noRegion });
 
   const cov = spanSec ? Math.round(100*coveredSec/spanSec) : null;
   const delta = cmp ? planKm - factCmpKm : null;
+  const hit = stopRows.filter(r => r.i !== null).length;
   renderStats([
     { v: shown, label: 'треков выбрано' },
-    { v: pointRows.length, label: 'точек' },
+    ...(stopRows.length ? [{ v: hit + ' из ' + stopRows.length, label: 'плановых точек посещено',
+                             warn: hit < stopRows.length }] : []),
+    { v: pointRows.length, label: 'остановок показано' },
     { v: cov === null ? '—' : cov + '%', label: 'покрытие GPS', warn: cov !== null && cov < 50 },
     { v: km(totalM), label: 'км по трекеру' },
     { v: km(gapM), label: 'из них на разрывах', warn: gapM > 0 },
@@ -935,6 +1411,67 @@ async function renderAll(fit){
   window.__rows = pointRows;
 }
 
+/* ============ таблица «план / факт» по остановкам ============ */
+function devMin(planIso, factIso){
+  if (!planIso || !factIso) return null;
+  return (new Date(factIso) - new Date(planIso))/60000;
+}
+function signed(v, unit){
+  if (v === null) return '—';
+  const r = Math.round(v);
+  return (r > 0 ? '+' : '') + r + (unit ? ' ' + unit : '');
+}
+
+function renderStops(rows){
+  lastPlanFact = rows;
+  const tb = document.getElementById('tb-stops');
+  document.getElementById('empty-stops').style.display = rows.length ? 'none' : 'block';
+
+  tb.innerHTML = rows.map(r => {
+    const s = r.stop, found = r.i !== null;
+    const dev = found ? devMin(s.plannedArrival, r.t) : null;
+    /* до сопоставленной точки был разрыв — реальный приезд мог быть где угодно внутри него */
+    const blind = found ? Math.round(r.gapBefore/60) : null;
+    const shaky = found && dev !== null && blind !== null && blind >= Math.abs(dev);
+    return `<tr data-key="${r.key}" data-gap="${shaky || (found && r.gapBefore > gapSec()) ? 1 : 0}" tabindex="0">
+      <td class="num r">${s.seq}</td>
+      <td class="who">${esc(r.driver)}</td>
+      <td class="who" title="${esc(s.address || s.label || '')}">${esc(s.address || s.label || '—')}</td>
+      <td class="num r">${s.plannedArrival ? hhmm(s.plannedArrival) : '—'}</td>
+      <td class="num r">${found ? hhmm(r.t) : '—'}</td>
+      <td class="num r">${dev === null ? '—' : signed(dev, 'мин')}</td>
+      <td class="num r dim">${blind === null ? '—' : (blind ? '±' + blind + ' мин' : 'точно')}</td>
+      <td class="num r">${found ? Math.round(r.distM) + ' м'
+                                : (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')}</td>
+      <td>${found ? 'да' : (s.lat === null ? 'нет координат' : 'не найдена')}</td>
+    </tr>`;
+  }).join('');
+
+  tb.querySelectorAll('tr').forEach(tr => {
+    const hit = planMarkers.find(x => x.key === tr.dataset.key);
+    if (!hit) return;
+    tr.addEventListener('mouseenter', () => hit.m.openTooltip());
+    tr.addEventListener('mouseleave', () => hit.m.closeTooltip());
+    tr.addEventListener('focus', () => hit.m.openTooltip());
+    tr.addEventListener('blur', () => hit.m.closeTooltip());
+    tr.addEventListener('click', () => map && map.setView(hit.m.getLatLng(), Math.max(map.getZoom(), 16)));
+  });
+
+  const notes = [];
+  if (rows.length){
+    const miss = rows.filter(r => r.i === null && r.stop.lat !== null);
+    const far = miss.filter(r => r.nearestM !== null && r.nearestM > 5000).length;
+    if (miss.length) notes.push(`Не найдено точек рядом: ${miss.length} из ${rows.length}. Это либо пропуск, либо дыра в треке — смотрите колонку «Расстояние».`);
+    if (far && far === miss.length && miss.length > 2)
+      notes.push('Ближайшие точки за километры от плана — очень похоже, что в плане перепутаны широта и долгота. Перезалейте план с галкой «поменять широту и долготу».');
+    notes.push(`Факт — первая точка трека в радиусе ${radiusM()} м, поиск идёт по порядку остановок. Колонка «Точность» показывает разрыв трека перед этой точкой: если он больше отклонения, отклонение ничего не доказывает.`);
+  }
+  const note = document.getElementById('stops-note');
+  note.textContent = notes.join(' ');
+  note.className = 'note' + (rows.some(r => r.i === null && r.stop.lat !== null) ? ' warn' : '');
+  note.style.display = notes.length ? 'block' : 'none';
+}
+
 function renderStats(list){
   const bar = document.getElementById('bar');
   bar.innerHTML = list.map(s =>
@@ -942,26 +1479,42 @@ function renderStats(list){
   ).join('') + `
     <div class="spacer"></div>
     <div class="ctl">UTC+<input type="number" id="in-tz" value="${tzValue}" min="-12" max="14" step="1"></div>
+    <div class="ctl">стоянка от <input type="number" id="in-pause" value="${pauseValue}" min="0" step="1"> мин</div>
+    <div class="ctl">радиус <input type="number" id="in-radius" value="${radiusValue}" min="10" step="10"> м</div>
     <div class="ctl">разрыв от <input type="number" id="in-gap" value="${gapValue}" min="1" step="1"> мин</div>`;
   wireSettings();
 }
 
 /* значения контролов живут отдельно: сама панель перерисовывается целиком */
-let tzValue = 5, gapValue = 3;
+let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M;
 function wireSettings(){
-  const tzEl = document.getElementById('in-tz'), gapEl = document.getElementById('in-gap');
-  tzEl.addEventListener('change', async () => {
-    tzValue = Number(tzEl.value) || 0; await saveSettings(); renderList(); await renderAll(false);
-  });
-  gapEl.addEventListener('change', async () => {
-    gapValue = Math.max(1, Number(gapEl.value) || 3); await saveSettings(); await renderAll(false);
-  });
+  const on = (id, apply, relist) => {
+    const el = document.getElementById(id);
+    el.addEventListener('change', async () => {
+      apply(el); await saveSettings();
+      if (relist) renderList();
+      await renderAll(false);
+    });
+  };
+  on('in-tz',     el => { tzValue = Number(el.value) || 0; }, true);
+  on('in-gap',    el => { gapValue = Math.max(1, Number(el.value) || 3); });
+  on('in-pause',  el => { pauseValue = Math.max(0, Number(el.value) || 0); });
+  on('in-radius', el => { radiusValue = Math.max(10, Number(el.value) || MATCH_RADIUS_M); });
 }
-async function saveSettings(){ await local.set(SET_KEY, JSON.stringify({ tz: tzValue, gap: gapValue })); }
+async function saveSettings(){
+  await local.set(SET_KEY, JSON.stringify({ tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue }));
+}
 
-function renderPoints(rows){
+function renderPoints(rows, hidden){
   const tb = document.getElementById('tb-points');
   document.getElementById('empty-points').style.display = rows.length ? 'none' : 'block';
+
+  const note = document.getElementById('points-note');
+  const shown = hidden
+    ? `Скрыто точек в движении: ${hidden}. Показаны старт, финиш и те, перед которыми водитель простоял ${pauseSec()/60} мин и дольше. Пробег и покрытие считаются по всем точкам, фильтр только на показ.`
+    : '';
+  note.textContent = shown;
+  note.style.display = shown ? 'block' : 'none';
   tb.innerHTML = rows.map(r => `
     <tr data-key="${r.key}" data-gap="${r.isGap?1:0}" tabindex="0">
       <td class="num r">${r.n}</td>
@@ -1094,6 +1647,28 @@ function csvPoints(){
     ]),
     'treki-' + rows[0].rec.date + '.csv');
 }
+function csvStops(){
+  if (!lastPlanFact.length){ say('msg','Нет плановых остановок: загрузите план с JSON.','err'); return; }
+  toCSV(
+    ['водитель','номер_точки','адрес','план_время','факт_время','отклонение_мин','точность_мин','расстояние_м','приезжал','широта','долгота'],
+    lastPlanFact.map(r => {
+      const s = r.stop, found = r.i !== null;
+      const dev = found ? devMin(s.plannedArrival, r.t) : null;
+      return [
+        r.driver, s.seq, s.address || s.label || '',
+        s.plannedArrival ? hhmm(s.plannedArrival) : '',
+        found ? hhmm(r.t) : '',
+        dev === null ? '' : Math.round(dev),
+        found ? Math.round(r.gapBefore/60) : '',
+        found ? Math.round(r.distM) : (r.nearestM === null ? '' : Math.round(r.nearestM)),
+        found ? 'да' : (s.lat === null ? 'нет координат' : 'нет'),
+        s.lat === null ? '' : s.lat.toFixed(7),
+        s.lon === null ? '' : s.lon.toFixed(7)
+      ];
+    }),
+    'plan-fakt-' + (lastPlanFact[0].rec ? lastPlanFact[0].rec.date : 'tochki') + '.csv');
+}
+
 function csvSummary(){
   if (!lastSummary.length){ say('msg','Сначала выберите хотя бы один трек.','err'); return; }
   toCSV(
@@ -1114,6 +1689,7 @@ function csvSummary(){
 
 /* ============ вкладки ============ */
 const TABS = [
+  { btn:'tab-stops',  pane:'pane-stops' },
   { btn:'tab-points', pane:'pane-points' },
   { btn:'tab-sum',    pane:'pane-sum' }
 ];
@@ -1204,6 +1780,15 @@ document.getElementById('btn-add').addEventListener('click', () => {
   addTrack(raw);
 });
 document.getElementById('btn-addplan').addEventListener('click', addPlan);
+document.getElementById('btn-planfile').addEventListener('click', () => document.getElementById('p-file').click());
+document.getElementById('p-file').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { document.getElementById('p-json').value = String(rd.result); addPlan(); };
+  rd.onerror = () => say('msg-plan', 'Файл не прочитался: ' + f.name, 'err');
+  rd.readAsText(f);
+  e.target.value = '';
+});
 document.getElementById('btn-file').addEventListener('click', () => document.getElementById('in-file').click());
 document.getElementById('in-file').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
@@ -1214,8 +1799,10 @@ document.getElementById('in-file').addEventListener('change', e => {
   e.target.value = '';
 });
 document.getElementById('btn-csv').addEventListener('click', () => {
-  const onSummary = document.getElementById('tab-sum').getAttribute('aria-selected') === 'true';
-  onSummary ? csvSummary() : csvPoints();
+  const on = id => document.getElementById(id).getAttribute('aria-selected') === 'true';
+  if (on('tab-sum')) csvSummary();
+  else if (on('tab-stops')) csvStops();
+  else csvPoints();
 });
 
 /* ============ старт ============ */
@@ -1226,6 +1813,8 @@ document.getElementById('btn-csv').addEventListener('click', () => {
     try { const s = JSON.parse(set);
       if (isFinite(s.tz)) tzValue = Number(s.tz);
       if (isFinite(s.gap)) gapValue = Math.max(1, Number(s.gap));
+      if (isFinite(s.pause)) pauseValue = Math.max(0, Number(s.pause));
+      if (isFinite(s.radius)) radiusValue = Math.max(10, Number(s.radius));
     } catch(e){}
   }
   renderStats([{ v:'—', label:'треков выбрано' }]);

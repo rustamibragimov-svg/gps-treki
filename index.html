@@ -126,11 +126,28 @@
   .planpin{background:none;border:0}
   .planpin-dot{
     display:flex;align-items:center;justify-content:center;width:22px;height:22px;
-    border-radius:50%;background:#111827;color:#fff;border:2px solid #fff;
+    border-radius:4px;background:#111827;color:#fff;border:2px solid #fff;
     font:600 11px/1 ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
     box-shadow:0 0 0 1px rgba(0,0,0,.25);
   }
   .planpin-dot.miss{background:#fff;color:var(--alert);border-color:var(--alert)}
+  .planpin-dot.hot{transform:scale(1.35)}
+
+  /* факт: стоянки нумеруются по порядку — иначе на карте не понять, куда водитель ехал сначала */
+  .factpin{background:none;border:0}
+  .factpin-dot{
+    display:flex;align-items:center;justify-content:center;width:20px;height:20px;
+    border-radius:50%;background:var(--c);color:#fff;border:2px solid #fff;
+    font:600 10.5px/1 ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
+    box-shadow:0 0 0 1px rgba(0,0,0,.2);
+  }
+  .factpin-dot.start{background:#fff;color:var(--c);border-color:var(--c);box-shadow:0 0 0 2px var(--c)}
+  .factpin-dot.finish{box-shadow:0 0 0 3px var(--c)}
+  .factpin-dot.hot{transform:scale(1.35)}
+
+  .legend .chk2{display:flex;align-items:center;gap:5px;cursor:pointer}
+  .legend .chk2 input{width:auto;margin:0}
+  .legend .dim{color:var(--ink-2)}
 
   .legend{display:flex;gap:14px;align-items:center;font-size:11.5px;color:var(--ink-2);padding:7px 20px;
     background:var(--panel);border-bottom:1px solid var(--line-soft)}
@@ -178,7 +195,9 @@
   td.who{max-width:210px;overflow:hidden;text-overflow:ellipsis}
   td.dim{color:var(--ink-2)}
   .swatch{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
-  .tblempty{padding:26px 20px;color:var(--ink-2)}
+  .tblempty{padding:26px 20px;color:var(--ink-2);max-width:820px;line-height:1.6}
+  .tblempty b{display:block;color:var(--ink);font-weight:560;margin-bottom:5px;font-size:14px}
+  .tblempty code{background:#F2F5F7;padding:1px 5px;border-radius:3px;font-size:12px}
   .note{padding:10px 20px;font-size:12.5px;color:var(--ink-2);border-bottom:1px solid var(--line-soft);background:#FAFBFC}
   .note.warn{color:var(--alert);background:var(--alert-bg)}
 
@@ -286,10 +305,10 @@
     <div id="map"></div>
     <div class="tilewarn" id="tilewarn">Подложка карты не загрузилась. Точки и трек показаны.</div>
     <div class="legend">
-      <i class="l-plan">план: пронумерованные точки, пунктир</i>
-      <i class="l-fact">факт: цвет трека, кружки на стоянках</i>
-      <i class="l-gap">разрыв трека</i>
-      <i>белый номер в красной рамке — на эту точку водитель не приезжал</i>
+      <label class="chk2"><input type="checkbox" id="ly-plan" checked><i class="l-plan">план: тёмные квадраты, пунктир</i></label>
+      <label class="chk2"><input type="checkbox" id="ly-fact" checked><i class="l-fact">факт: цветные кружки стоянок по порядку</i></label>
+      <label class="chk2"><input type="checkbox" id="ly-gap" checked><i class="l-gap">разрывы: прямая через дыру в треке, не поездка</i></label>
+      <i class="dim">белый номер в красной рамке — на эту точку водитель не приезжал</i>
     </div>
 
     <div class="tabs">
@@ -1260,39 +1279,83 @@ function initMap(){
   let warned = false;
   tiles.on('tileerror', () => { if (!warned){ warned = true; document.getElementById('tilewarn').style.display = 'block'; } });
   factLayer = L.layerGroup().addTo(map);
+  gapLayer  = L.layerGroup().addTo(map);
   planLayer = L.layerGroup().addTo(map);
+}
+
+/* разрывы — отдельным слоем: это самая обманчивая часть картинки,
+   её должно быть видно как «данных нет», и её должно быть можно убрать */
+function applyLayers(){
+  if (!map) return;
+  [['ly-plan', planLayer], ['ly-fact', factLayer], ['ly-gap', gapLayer]].forEach(([id, lay]) => {
+    if (!lay) return;
+    if (layerOn[id] === false) map.removeLayer(lay); else map.addLayer(lay);
+  });
+}
+function wireLayers(){
+  ['ly-plan','ly-fact','ly-gap'].forEach(id => {
+    const el = document.getElementById(id);
+    el.checked = layerOn[id] !== false;
+    el.addEventListener('change', async () => {
+      layerOn[id] = el.checked; await saveSettings(); applyLayers();
+    });
+  });
+  applyLayers();
 }
 
 /* Линия рисуется по всем точкам — это фактический путь и пробег.
    Кружки ставятся только там, где водитель стоял: короткие шаги скрыты. */
 function drawFact(rec, c, bounds, keep){
+  let stop = 0;
   c.rows.forEach((r,i) => {
     const p = r.p;
     bounds.push([p.lat, p.lon]);
 
     if (i){
       const prev = c.rows[i-1].p;
-      L.polyline([[prev.lat,prev.lon],[p.lat,p.lon]], {
-        color: r.isGap ? '#A63D40' : rec.color,
-        weight: r.isGap ? 2 : 3, opacity: r.isGap ? .8 : .65,
-        dashArray: r.isGap ? '5,5' : null
-      }).addTo(factLayer);
+      /* реальный отрезок — жирный и заметный; через разрыв — тонкая бледная прямая:
+         там водитель ехал неизвестно как, и линия не должна выглядеть как маршрут */
+      L.polyline([[prev.lat,prev.lon],[p.lat,p.lon]], r.isGap
+        ? { color:'#A63D40', weight:1.5, opacity:.3, dashArray:'3,7' }
+        : { color: rec.color, weight:4, opacity:.85 }
+      ).addTo(r.isGap ? gapLayer : factLayer);
     }
     if (!keep(r, i, c.rows.length)) return;
 
     const first = i === 0, last = i === c.rows.length-1;
-    const m = L.circleMarker([p.lat, p.lon], {
-      radius: first||last ? 6 : 4, color: rec.color,
-      weight: first||last ? 2.5 : 1.2,
-      fillColor: first ? '#fff' : rec.color, fillOpacity: first ? 1 : .75
+    stop++;
+    const cls = 'factpin-dot' + (first ? ' start' : last ? ' finish' : '');
+    const m = L.marker([p.lat, p.lon], {
+      icon: L.divIcon({ className:'factpin',
+        html:`<span class="${cls}" style="--c:${rec.color}">${stop}</span>`,
+        iconSize:[20,20], iconAnchor:[10,10] })
     }).bindTooltip(
-      `<b>${esc(rec.driver)}</b><br>${hhmmss(p.t)} · №${r.n}${first?' · старт':last?' · финиш':''}<br>` +
+      `<b>${esc(rec.driver)}</b><br>стоянка №${stop}${first?' · старт':last?' · финиш':''}<br>` +
+      `${hhmmss(p.t)} · точка №${r.n}<br>` +
       `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>пробег ${km(r.cum)} км` +
-      (r.dt ? '<br>пауза ' + dur(r.dt) : '') + (r.isGap ? ' · разрыв трека' : ''),
-      { className:'gps', direction:'top', offset:[0,-4] }
+      (r.dt ? '<br>стоял ' + dur(r.dt) : '') + (r.isGap ? ' · это разрыв трека, а не стоянка' : ''),
+      { className:'gps', direction:'top', offset:[0,-12] }
     ).addTo(factLayer);
-    markers.push({ key: rec.id+'-'+i, m });
+    markers.push({ key: rec.id+'-'+i, m, on: () => hot(m, true), off: () => hot(m, false) });
   });
+}
+
+/* связь строки таблицы с меткой на карте — одна на все три таблицы */
+function wireRows(tbody, list){
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const hit = list.find(x => x.key === tr.dataset.key);
+    if (!hit) return;
+    tr.addEventListener('mouseenter', hit.on); tr.addEventListener('mouseleave', hit.off);
+    tr.addEventListener('focus', hit.on);      tr.addEventListener('blur', hit.off);
+    tr.addEventListener('click', () => map && map.setView(hit.m.getLatLng(), Math.max(map.getZoom(), 16)));
+  });
+}
+
+/* подсветка метки при наведении на строку таблицы */
+function hot(m, on){
+  const el = m.getElement && m.getElement();
+  if (el && el.firstChild) el.firstChild.classList.toggle('hot', on);
+  on ? m.openTooltip() : m.closeTooltip();
 }
 
 /* План: пронумерованные точки в плановом порядке, соединённые пунктиром.
@@ -1324,7 +1387,7 @@ function drawPlan(rows, bounds){
              : 'ближайшая точка в ' + (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')),
       { className:'gps', direction:'top', offset:[0,-12] }
     ).addTo(planLayer);
-    planMarkers.push({ key: r.key, m });
+    planMarkers.push({ key: r.key, m, on: () => hot(m, true), off: () => hot(m, false) });
 
     if (found) L.polyline([[s.lat,s.lon],[r.p.lat,r.p.lon]], {
       color: PLAN_COLOR, weight: 1, opacity: .45, dashArray: '2,3'
@@ -1423,7 +1486,7 @@ async function renderAll(fit){
 
   pointRows.sort((a,b) => a.p.t < b.p.t ? -1 : a.p.t > b.p.t ? 1 : 0);
   renderPoints(pointRows, hiddenPoints);
-  renderStops(stopRows);
+  renderStops(stopRows, { tracks: shown, plans: loaded.flatMap(l => plansOf(l.rec.id)) });
   renderSummary(summary, { multi, noRegion });
 
   const cov = spanSec ? Math.round(100*coveredSec/spanSec) : null;
@@ -1448,6 +1511,24 @@ async function renderAll(fit){
 }
 
 /* ============ таблица «план / факт» по остановкам ============ */
+/* Пустая таблица должна объяснять, чего именно не хватает этому дню,
+   а не отсылать к общей инструкции. */
+function whyNoStops(ctx){
+  if (!ctx.tracks) return 'Выберите трек слева — сверка появится здесь.';
+  if (!ctx.plans || !ctx.plans.length)
+    return '<b>У выбранных треков нет плана.</b>Добавьте план в блоке «Добавить план» слева: он свяжется с треком по паре водитель + дата.';
+  const bare = ctx.plans.filter(p => !p.stops);
+  if (bare.length === ctx.plans.length){
+    const p = bare[0];
+    return `<b>План есть, но он без остановок — сверять не с чем.</b>` +
+      `План «${esc(p.driver)}» за ${dateHuman(p.date)} заведён только шапкой: километраж есть, точек нет. ` +
+      `Откройте «Добавить план», впишите того же водителя и ту же дату, вставьте в поле «JSON ответа с планом» ответ запроса` +
+      (p.ext ? ` <code>${esc(p.ext)}</code>` : '') +
+      ` и нажмите «Добавить план». Инструмент покажет, что распознал, и после записи эта таблица заполнится, а на карте появятся плановые точки.`;
+  }
+  return '<b>Остановки не прочитались.</b>План с остановками есть, но точки не загрузились — посмотрите сообщение об ошибке в блоке слева.';
+}
+
 function devMin(planIso, factIso){
   if (!planIso || !factIso) return null;
   return (new Date(factIso) - new Date(planIso))/60000;
@@ -1458,10 +1539,12 @@ function signed(v, unit){
   return (r > 0 ? '+' : '') + r + (unit ? ' ' + unit : '');
 }
 
-function renderStops(rows){
+function renderStops(rows, ctx){
   lastPlanFact = rows;
   const tb = document.getElementById('tb-stops');
-  document.getElementById('empty-stops').style.display = rows.length ? 'none' : 'block';
+  const empty = document.getElementById('empty-stops');
+  empty.style.display = rows.length ? 'none' : 'block';
+  if (!rows.length) empty.innerHTML = whyNoStops(ctx || {});
 
   tb.innerHTML = rows.map(r => {
     const s = r.stop, found = r.i !== null;
@@ -1484,15 +1567,7 @@ function renderStops(rows){
     </tr>`;
   }).join('');
 
-  tb.querySelectorAll('tr').forEach(tr => {
-    const hit = planMarkers.find(x => x.key === tr.dataset.key);
-    if (!hit) return;
-    tr.addEventListener('mouseenter', () => hit.m.openTooltip());
-    tr.addEventListener('mouseleave', () => hit.m.closeTooltip());
-    tr.addEventListener('focus', () => hit.m.openTooltip());
-    tr.addEventListener('blur', () => hit.m.closeTooltip());
-    tr.addEventListener('click', () => map && map.setView(hit.m.getLatLng(), Math.max(map.getZoom(), 16)));
-  });
+  wireRows(tb, planMarkers);
 
   const notes = [];
   if (rows.length){
@@ -1524,6 +1599,7 @@ function renderStats(list){
 
 /* значения контролов живут отдельно: сама панель перерисовывается целиком */
 let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M;
+let layerOn = {};            // какие слои карты показаны
 function wireSettings(){
   const on = (id, apply, relist) => {
     const el = document.getElementById(id);
@@ -1539,7 +1615,9 @@ function wireSettings(){
   on('in-radius', el => { radiusValue = Math.max(10, Number(el.value) || MATCH_RADIUS_M); });
 }
 async function saveSettings(){
-  await local.set(SET_KEY, JSON.stringify({ tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue }));
+  await local.set(SET_KEY, JSON.stringify({
+    tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue, layers: layerOn
+  }));
 }
 
 function renderPoints(rows, hidden){
@@ -1565,15 +1643,7 @@ function renderPoints(rows, hidden){
       <td class="num r">${km(r.cum)} км</td>
     </tr>`).join('');
 
-  tb.querySelectorAll('tr').forEach(tr => {
-    const hit = markers.find(x => x.key === tr.dataset.key);
-    if (!hit) return;
-    const on  = () => { hit.m.setStyle({ weight:4, fillOpacity:1 }); hit.m.openTooltip(); };
-    const off = () => { hit.m.setStyle({ weight:1.2, fillOpacity:.75 }); hit.m.closeTooltip(); };
-    tr.addEventListener('mouseenter', on); tr.addEventListener('mouseleave', off);
-    tr.addEventListener('focus', on); tr.addEventListener('blur', off);
-    tr.addEventListener('click', () => map.setView(hit.m.getLatLng(), Math.max(map.getZoom(), 16)));
-  });
+  wireRows(tb, markers);
 }
 
 /* ============ сводка: день → регион → водитель ============ */
@@ -1852,9 +1922,11 @@ document.getElementById('btn-csv').addEventListener('click', () => {
       if (isFinite(s.gap)) gapValue = Math.max(1, Number(s.gap));
       if (isFinite(s.pause)) pauseValue = Math.max(0, Number(s.pause));
       if (isFinite(s.radius)) radiusValue = Math.max(10, Number(s.radius));
+      if (s.layers && typeof s.layers === 'object') layerOn = s.layers;
     } catch(e){}
   }
   renderStats([{ v:'—', label:'треков выбрано' }]);
+  wireLayers();
 
   const saved = await local.get(SESS_KEY);
   if (saved){

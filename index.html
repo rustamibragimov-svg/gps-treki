@@ -316,7 +316,7 @@
     <div class="legend">
       <label class="chk2"><input type="checkbox" id="ly-plan" checked><i class="l-plan">план: тёмные квадраты с номерами</i></label>
       <label class="chk2"><input type="checkbox" id="ly-fact" checked><i class="l-fact">факт: трек и кружки стоянок по порядку</i></label>
-      <label class="chk2"><input type="checkbox" id="ly-gap" checked><i class="l-gap">разрывы: трекер молчал, а машина уехала — путь выдуман</i></label>
+      <label class="chk2"><input type="checkbox" id="ly-gap" checked><i class="l-gap">подсветить разрывы: трекер молчал, а машина уехала</i></label>
       <i class="dim">белый номер в красной рамке — на эту точку водитель не приезжал</i>
     </div>
 
@@ -1505,12 +1505,16 @@ function drawFact(rec, c, bounds, keep){
 
     if (i){
       const prev = c.rows[i-1].p;
-      /* реальный отрезок — жирный и заметный; через разрыв — тонкая бледная прямая:
-         там водитель ехал неизвестно как, и линия не должна выглядеть как маршрут */
-      L.polyline([[prev.lat,prev.lon],[p.lat,p.lon]], r.isGap
-        ? { color:'#A63D40', weight:1.5, opacity:.3, dashArray:'3,7' }
-        : { color: rec.color, weight:4, opacity:.85 }
-      ).addTo(r.isGap ? gapLayer : factLayer);
+      const seg = [[prev.lat, prev.lon],[p.lat, p.lon]];
+      if (r.isGap){
+        /* через разрыв путь неизвестен. Волосок рисуем всегда, иначе трек
+           рассыпается на куски и маршрут не читается; заметную подсветку
+           разрыва можно выключить галкой. */
+        L.polyline(seg, { color: rec.color, weight:1, opacity:.25, dashArray:'1,6' }).addTo(factLayer);
+        L.polyline(seg, { color:'#A63D40', weight:2, opacity:.5, dashArray:'4,6' }).addTo(gapLayer);
+      } else {
+        L.polyline(seg, { color: rec.color, weight:4, opacity:.85 }).addTo(factLayer);
+      }
     }
     if (!keep(r, i, c.rows.length)) return;
 
@@ -1622,7 +1626,7 @@ async function renderAll(fit){
     }
   }
 
-  if (map){ factLayer.clearLayers(); planLayer.clearLayers(); }
+  if (map){ factLayer.clearLayers(); gapLayer.clearLayers(); planLayer.clearLayers(); }
   markers = []; planMarkers = [];
   const g = gapSec(), pauseS = pauseSec(), radius = radiusM();
   const keep = (r, i, n) => i === 0 || i === n-1 || r.dt >= pauseS;
@@ -1759,24 +1763,43 @@ function renderStops(rows, ctx){
       <td class="num r">${found ? Math.round(r.distM) + ' м'
                                 : (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')}</td>
       <td>${found ? (r.reused ? 'да, та же точка, что у предыдущей' : 'да')
-                  : (s.lat === null ? 'нет координат' : 'не найдена')}</td>
+                  : s.lat === null ? 'нет координат'
+                  : (r.nearestM !== null && r.nearestM <= radiusM())
+                      ? 'нет — отброшена порядком плана'
+                      : 'нет, трек рядом не проходил'}</td>
     </tr>`;
   }).join('');
 
   wireRows(tb, planMarkers);
 
   const notes = [];
+  let bad = false;
   if (rows.length){
+    const R = radiusM();
+    const hit  = rows.filter(r => r.i !== null).length;
     const miss = rows.filter(r => r.i === null && r.stop.lat !== null);
-    const far = miss.filter(r => r.nearestM !== null && r.nearestM > 5000).length;
-    if (miss.length) notes.push(`Не найдено точек рядом: ${miss.length} из ${rows.length}. Это либо пропуск, либо дыра в треке — смотрите колонку «Расстояние».`);
-    if (far && far === miss.length && miss.length > 2)
+    /* трек подходил ближе радиуса, но точка всё равно не засчитана —
+       так бывает только при поиске по порядку плана */
+    const near = miss.filter(r => r.nearestM !== null && r.nearestM <= R);
+    const far  = miss.filter(r => r.nearestM !== null && r.nearestM > 5000);
+
+    notes.push(`Посещено ${hit} из ${rows.length}: точка считается посещённой, если трек подошёл к ней ближе ${R} м.`);
+    if (near.length){
+      bad = true;
+      notes.push(`У ${near.length} точек трек проходил ближе ${R} м, но они не засчитаны: сейчас включён поиск по плановому порядку. Поставьте в шапке галку «искать по всему треку» — водители часто едут не по плановой очерёдности.`);
+    }
+    if (miss.length - near.length > 0)
+      notes.push(`${miss.length - near.length} точек трек не проходил вовсе — либо водитель туда не заезжал, либо трекер молчал как раз в этом месте (смотрите колонку «Расстояние»).`);
+    if (far.length && far.length === miss.length && miss.length > 2){
+      bad = true;
       notes.push('Ближайшие точки за километры от плана — очень похоже, что в плане перепутаны широта и долгота. Перезалейте план с галкой «поменять широту и долготу».');
-    notes.push(`Факт — первая точка трека в радиусе ${radiusM()} м, поиск идёт по порядку остановок. Колонка «Точность» показывает разрыв трека перед этой точкой: если он больше отклонения, отклонение ничего не доказывает.`);
+    }
+    if (rows.some(r => r.i !== null && r.stop.plannedArrival))
+      notes.push('Колонка «Точность» — разрыв трека перед засчитанной точкой: если он больше отклонения, отклонение ничего не доказывает.');
   }
   const note = document.getElementById('stops-note');
   note.textContent = notes.join(' ');
-  note.className = 'note' + (rows.some(r => r.i === null && r.stop.lat !== null) ? ' warn' : '');
+  note.className = 'note' + (bad ? ' warn' : '');
   note.style.display = notes.length ? 'block' : 'none';
 }
 
@@ -1796,7 +1819,10 @@ function renderStats(list){
 }
 
 /* значения контролов живут отдельно: сама панель перерисовывается целиком */
-let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M, anyValue = false;
+/* По умолчанию точка считается посещённой, если трек вообще подошёл к ней ближе
+   радиуса — независимо от очерёдности. Это и есть правило заказчика. Порядок
+   плана можно включить обратно, сняв галку. */
+let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M, anyValue = true;
 let layerOn = {};            // какие слои карты показаны
 function wireSettings(){
   const on = (id, apply, relist) => {
@@ -1815,7 +1841,8 @@ function wireSettings(){
 }
 async function saveSettings(){
   await local.set(SET_KEY, JSON.stringify({
-    tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue, any: anyValue, layers: layerOn
+    tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue,
+    any: anyValue, anySet: true, layers: layerOn
   }));
 }
 
@@ -2121,7 +2148,9 @@ document.getElementById('btn-csv').addEventListener('click', () => {
       if (isFinite(s.gap)) gapValue = Math.max(1, Number(s.gap));
       if (isFinite(s.pause)) pauseValue = Math.max(0, Number(s.pause));
       if (isFinite(s.radius)) radiusValue = Math.max(10, Number(s.radius));
-      if (typeof s.any === 'boolean') anyValue = s.any;
+      /* прежний сохранённый выбор игнорируем один раз: поиск по порядку был
+         неверным умолчанием и отбрасывал посещённые точки */
+      if (s.anySet === true && typeof s.any === 'boolean') anyValue = s.any;
       if (s.layers && typeof s.layers === 'object') layerOn = s.layers;
     } catch(e){}
   }

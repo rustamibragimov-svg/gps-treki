@@ -115,8 +115,6 @@
   .bar .spacer{flex:1}
   .bar .ctl{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
   .bar .ctl input{width:64px;padding:5px 7px;border:1px solid var(--line);border-radius:4px;font:inherit;font-size:13px}
-  .bar .chk3{cursor:pointer}
-  .bar .chk3 input{width:auto;padding:0}
 
   #map{height:40vh;min-height:230px;background:#DFE4E9;border-bottom:1px solid var(--line)}
   .tilewarn{position:absolute;z-index:500;left:10px;bottom:10px;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:4px;padding:6px 9px;font-size:12px;color:var(--ink-2);display:none}
@@ -388,13 +386,17 @@ const COLORS   = ['#0F6E6E','#B4531A','#3B5BA5','#7A4E9E','#1F7A3D','#A63D40','#
 const NO_REGION = 'Регион не указан';
 const PLAN_COLOR = '#111827';          // план — один цвет на всех, факт остаётся цветным
 const MAX_STOPS  = 2000;
-const MATCH_RADIUS_M = 100;            // радиус, в котором точка засчитывается за приезд
+const MATCH_RADIUS_M = 200;            // радиус, в котором точка засчитывается за приезд
 const MAX_RAW_BYTES  = 2 * 1024 * 1024; // предел на исходник, который кладём в route_plans.raw
 const MIN_PAUSE_MIN  = 1;              // короче этой паузы точки в таблицу и на карту не идут
 /* Длинная пауза сама по себе не разрыв. Если машина осталась на месте — это стоянка,
    и мы знаем, где водитель был. Разрыв — когда трекер молчал, а машина уехала: вот там
    прямая линия и есть выдумка. */
 const GAP_MIN_M = 250;
+/* Настоящая стоянка: машина не уходила дальше DWELL_MAX_M дольше DWELL_MIN_S.
+   Интервал между точками трека тут ни при чём — он просто частота записи. */
+const DWELL_MIN_S = 180;
+const DWELL_MAX_M = 100;
 
 /* ============ хранилище (только этот браузер) ============ */
 /* Только localStorage. Прежняя ветка через window.storage убрана: здесь лежат
@@ -523,7 +525,6 @@ const tz = () => Number(document.getElementById('in-tz').value) || 0;
 const gapSec = () => Math.max(1, Number(document.getElementById('in-gap').value) || 3) * 60;
 const pauseSec = () => Math.max(0, Number(document.getElementById('in-pause').value) || 0) * 60;
 const radiusM = () => Math.max(10, Number(document.getElementById('in-radius').value) || MATCH_RADIUS_M);
-const anyOrder = () => !!(document.getElementById('in-any') || {}).checked;
 const shifted = iso => new Date(new Date(iso).getTime() + tz()*3600e3);
 const p2 = n => String(n).padStart(2,'0');
 const hhmmss = iso => { const d = shifted(iso); return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds()); };
@@ -1424,36 +1425,51 @@ function computeTrack(pts, g){
 /* Ищем первую точку в радиусе, но не по всему треку, а начиная с точки, на которой
    сматчилась предыдущая остановка. Иначе проезд мимо будущей остановки по дороге к
    текущей даёт ложное раннее прибытие, а порядок остановок переворачивается. */
-function matchStops(stops, pts, radiusM, anyOrder){
-  let from = 0;
-  return stops.map(s => {
-    if (anyOrder) from = 0;      /* водитель ездит не по плановому порядку — ищем по всему треку */
+function matchStops(stops, rows, radiusM){
+  const pts = rows.map(r => r.p);
+  /* «заезжал» — это когда машина в радиусе ОСТАНОВИЛАСЬ. Проезд мимо по дороге
+     к другой точке тоже засчитываем (так просил заказчик), но помечаем отдельно. */
+  const still = r => !!r && r.dt >= DWELL_MIN_S && r.ds <= DWELL_MAX_M;
+  const stood = i => still(rows[i]) || still(rows[i+1]);
+
+  const out = stops.map(s => {
     const res = { stop: s, i: null, distM: null, nearestM: null, t: null,
-                  gapBefore: 0, reused: false };
+                  gapBefore: 0, driveBy: false, visitNo: null, outOfOrder: false };
     if (s.lat === null || s.lon === null || !pts.length) return res;
 
-    for (let i = from; i < pts.length; i++){
+    /* Ищем по всему треку: водитель вправе пропустить точку и закрыть её позже.
+       Порядок не отбрасывает точки — он считается отдельно и показывается. */
+    let first = -1, withStop = -1;
+    for (let i = 0; i < pts.length; i++){
+      if (haversine(s, pts[i]) > radiusM) continue;
+      if (first < 0) first = i;
+      if (stood(i)){ withStop = i; break; }
+    }
+    const idx = withStop >= 0 ? withStop : first;
+    if (idx >= 0){
+      res.i = idx;
+      res.distM = res.nearestM = haversine(s, pts[idx]);
+      res.t = pts[idx].t;
+      res.gapBefore = idx > 0 ? (new Date(pts[idx].t) - new Date(pts[idx-1].t))/1000 : 0;
+      res.driveBy = withStop < 0;
+      return res;
+    }
+    /* полный проход только для ненайденных: расстояние до ближайшей точки —
+       единственное, что объясняет, пропуск это или дыра в треке */
+    let nearest = Infinity;
+    for (let i = 0; i < pts.length; i++){
       const d = haversine(s, pts[i]);
-      if (d <= radiusM){
-        res.i = i; res.distM = d; res.nearestM = d; res.t = pts[i].t;
-        res.gapBefore = i > 0 ? (new Date(pts[i].t) - new Date(pts[i-1].t))/1000 : 0;
-        res.reused = i === from && from > 0;
-        from = i;                    /* следующую остановку ищем не раньше этой точки */
-        break;
-      }
+      if (d < nearest) nearest = d;
     }
-    /* полный проход только для ненайденных: там расстояние до ближайшей точки —
-       единственное, что объясняет пользователю, пропуск это или дыра в треке */
-    if (res.i === null){
-      let nearest = Infinity;
-      for (let i = 0; i < pts.length; i++){
-        const d = haversine(s, pts[i]);
-        if (d < nearest) nearest = d;
-      }
-      res.nearestM = nearest;
-    }
+    res.nearestM = nearest;
     return res;
   });
+
+  /* фактическая очерёдность заездов против плановой */
+  const hit = out.filter(r => r.i !== null);
+  hit.slice().sort((a,b) => a.t < b.t ? -1 : a.t > b.t ? 1 : 0).forEach((r,k) => r.visitNo = k+1);
+  hit.slice().sort((a,b) => a.stop.seq - b.stop.seq).forEach((r,k) => { r.outOfOrder = r.visitNo !== k+1; });
+  return out;
 }
 
 /* ============ карта ============ */
@@ -1651,7 +1667,7 @@ async function renderAll(fit){
     for (const p of ps){
       const stops = stopsByPlan[p.id];
       if (!stops || !stops.length) continue;
-      matchStops(stops, pts, radius, anyOrder()).forEach(r => {
+      matchStops(stops, c.rows, radius).forEach(r => {
         r.key = p.id + '-' + r.stop.seq;
         r.driver = rec.driver;
         r.rec = rec;
@@ -1762,11 +1778,10 @@ function renderStops(rows, ctx){
       <td class="num r dim">${blind === null ? '—' : (blind ? '±' + blind + ' мин' : 'точно')}</td>
       <td class="num r">${found ? Math.round(r.distM) + ' м'
                                 : (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')}</td>
-      <td>${found ? (r.reused ? 'да, та же точка, что у предыдущей' : 'да')
-                  : s.lat === null ? 'нет координат'
-                  : (r.nearestM !== null && r.nearestM <= radiusM())
-                      ? 'нет — отброшена порядком плана'
-                      : 'нет, трек рядом не проходил'}</td>
+      <td>${found
+          ? (r.outOfOrder ? `да, вне очереди · заезд ${r.visitNo}-й` : 'да, по плану')
+            + (r.driveBy ? ' · проехал не останавливаясь' : '')
+          : s.lat === null ? 'нет координат' : 'нет, не заезжал'}</td>
     </tr>`;
   }).join('');
 
@@ -1778,18 +1793,17 @@ function renderStops(rows, ctx){
     const R = radiusM();
     const hit  = rows.filter(r => r.i !== null).length;
     const miss = rows.filter(r => r.i === null && r.stop.lat !== null);
-    /* трек подходил ближе радиуса, но точка всё равно не засчитана —
-       так бывает только при поиске по порядку плана */
-    const near = miss.filter(r => r.nearestM !== null && r.nearestM <= R);
     const far  = miss.filter(r => r.nearestM !== null && r.nearestM > 5000);
 
-    notes.push(`Посещено ${hit} из ${rows.length}: точка считается посещённой, если трек подошёл к ней ближе ${R} м.`);
-    if (near.length){
+    const off  = rows.filter(r => r.outOfOrder).length;
+    const pass = rows.filter(r => r.driveBy).length;
+    notes.push(`Посещено ${hit} из ${rows.length}: точка засчитана, если трек подошёл к ней ближе ${R} м.`);
+    if (off) notes.push(`Не по плановой очерёдности: ${off}. Само по себе это не нарушение — точку можно пропустить и закрыть позже; смотреть надо на непосещённые.`);
+    if (pass) notes.push(`Трек прошёл без остановки через ${plural(pass, ['точку','точки','точек'])} — засчитаны по близости, но машина там не стояла.`);
+    if (miss.length){
       bad = true;
-      notes.push(`У ${near.length} точек трек проходил ближе ${R} м, но они не засчитаны: сейчас включён поиск по плановому порядку. Поставьте в шапке галку «искать по всему треку» — водители часто едут не по плановой очерёдности.`);
+      notes.push(`Не закрыто за день: ${miss.length}. Вот это и есть нарушение — либо водитель туда не заезжал, либо трекер молчал как раз в этом месте (смотрите колонку «Расстояние»).`);
     }
-    if (miss.length - near.length > 0)
-      notes.push(`${miss.length - near.length} точек трек не проходил вовсе — либо водитель туда не заезжал, либо трекер молчал как раз в этом месте (смотрите колонку «Расстояние»).`);
     if (far.length && far.length === miss.length && miss.length > 2){
       bad = true;
       notes.push('Ближайшие точки за километры от плана — очень похоже, что в плане перепутаны широта и долгота. Перезалейте план с галкой «поменять широту и долготу».');
@@ -1812,17 +1826,15 @@ function renderStats(list){
     <div class="ctl">UTC+<input type="number" id="in-tz" value="${tzValue}" min="-12" max="14" step="1"></div>
     <div class="ctl">стоянка от <input type="number" id="in-pause" value="${pauseValue}" min="0" step="1"> мин</div>
     <div class="ctl">радиус <input type="number" id="in-radius" value="${radiusValue}" min="10" step="10"> м</div>
-    <div class="ctl">разрыв от <input type="number" id="in-gap" value="${gapValue}" min="1" step="1"> мин</div>
-    <label class="ctl chk3" title="Водитель нередко едет не в плановом порядке. Без галки точка ищется только после предыдущей найденной, с галкой — по всему треку.">
-      <input type="checkbox" id="in-any"${anyValue ? ' checked' : ''}> искать по всему треку</label>`;
+    <div class="ctl">разрыв от <input type="number" id="in-gap" value="${gapValue}" min="1" step="1"> мин</div>`;
   wireSettings();
 }
 
 /* значения контролов живут отдельно: сама панель перерисовывается целиком */
-/* По умолчанию точка считается посещённой, если трек вообще подошёл к ней ближе
-   радиуса — независимо от очерёдности. Это и есть правило заказчика. Порядок
-   плана можно включить обратно, сняв галку. */
-let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M, anyValue = true;
+/* Точка считается посещённой, если трек подошёл к ней ближе радиуса — порядок
+   не участвует: водитель вправе пропустить точку и закрыть её позже. Отклонение
+   от плановой очерёдности считается отдельно и показывается в таблице. */
+let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M;
 let layerOn = {};            // какие слои карты показаны
 function wireSettings(){
   const on = (id, apply, relist) => {
@@ -1837,12 +1849,11 @@ function wireSettings(){
   on('in-gap',    el => { gapValue = Math.max(1, Number(el.value) || 3); });
   on('in-pause',  el => { pauseValue = Math.max(0, Number(el.value) || 0); });
   on('in-radius', el => { radiusValue = Math.max(10, Number(el.value) || MATCH_RADIUS_M); });
-  on('in-any',    el => { anyValue = el.checked; });
 }
 async function saveSettings(){
   await local.set(SET_KEY, JSON.stringify({
     tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue,
-    any: anyValue, anySet: true, layers: layerOn
+    layers: layerOn
   }));
 }
 
@@ -2148,9 +2159,6 @@ document.getElementById('btn-csv').addEventListener('click', () => {
       if (isFinite(s.gap)) gapValue = Math.max(1, Number(s.gap));
       if (isFinite(s.pause)) pauseValue = Math.max(0, Number(s.pause));
       if (isFinite(s.radius)) radiusValue = Math.max(10, Number(s.radius));
-      /* прежний сохранённый выбор игнорируем один раз: поиск по порядку был
-         неверным умолчанием и отбрасывал посещённые точки */
-      if (s.anySet === true && typeof s.any === 'boolean') anyValue = s.any;
       if (s.layers && typeof s.layers === 'object') layerOn = s.layers;
     } catch(e){}
   }

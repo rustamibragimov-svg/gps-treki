@@ -3,439 +3,213 @@
 <head>
 <meta charset="utf-8">
 <!-- Исходник публичный, поэтому ограничиваем, куда страница вообще может ходить.
-     Скрипт и стили внутри файла, отсюда 'unsafe-inline'; главное здесь connect-src:
-     даже при чужом коде на странице токен некуда отправить. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: https://tile.openstreetmap.org https://cdnjs.cloudflare.com; connect-src 'self' https://zbqjblrnbnsutpbtmqdi.supabase.co; form-action 'self'; base-uri 'none'; object-src 'none'">
+     Скрипт и стили внутри файла, отсюда 'unsafe-inline'; connect-src — только база.
+     Правила и пороги аномалий в исходник не зашиты: они приходят из базы после входа. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src https://zbqjblrnbnsutpbtmqdi.supabase.co; form-action 'self'; base-uri 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Треки водителей</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
-      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
+<title>Аналитика км</title>
 <style>
   :root{
-    --paper:#E7EAEE;
-    --panel:#FFFFFF;
-    --ink:#16202A;
-    --ink-2:#5A6672;
-    --line:#CBD3DB;
-    --line-soft:#E3E8ED;
-    --signal:#0F6E6E;
-    --alert:#A63D40;
-    --alert-bg:#FBEEEE;
+    --paper:#E7EAEE; --panel:#FFFFFF; --ink:#16202A; --ink-2:#5A6672;
+    --line:#CBD3DB; --line-soft:#E3E8ED; --signal:#0F6E6E;
+    --alert:#A63D40; --alert-bg:#FBEEEE; --warn:#8A5A12; --warn-bg:#FBF3E4;
   }
   *{box-sizing:border-box}
-  html,body{height:100%}
-  body{
-    margin:0;background:var(--paper);color:var(--ink);
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--paper);color:var(--ink);
     font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-    font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums;
-  }
-  .num{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
-  .shell{display:grid;grid-template-columns:330px minmax(0,1fr);height:100vh}
-
-  .side{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
-  .side-head{padding:18px 18px 14px;border-bottom:1px solid var(--line-soft)}
-  .side-head h1{margin:0;font-size:17px;font-weight:620;letter-spacing:-0.01em}
-  .side-head p{margin:4px 0 0;color:var(--ink-2);font-size:12.5px;display:flex;align-items:center;gap:6px}
-  .side-head p span:nth-of-type(2){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .side-head p button{font-size:11.5px;flex:none}
-  form.block{margin:0}
-  .led{width:8px;height:8px;border-radius:50%;background:#C0C8D0;flex:none}
-  .led[data-s="ok"]{background:var(--signal)}
-  .led[data-s="err"]{background:var(--alert)}
-  .side-scroll{overflow:auto;flex:1;min-height:0}
-
-  .block{padding:14px 18px;border-bottom:1px solid var(--line-soft)}
-  .block h2{margin:0 0 10px;font-size:13px;font-weight:600}
-  label.f{display:block;margin-bottom:9px}
-  label.f span{display:block;font-size:12px;color:var(--ink-2);margin-bottom:3px}
-  input[type=text],input[type=password],input[type=email],input[type=number],input[type=date],textarea{
-    width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:4px;
-    background:#fff;color:var(--ink);font:inherit;font-size:13px;
-  }
-  textarea{min-height:92px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.35}
-  input:focus-visible,textarea:focus-visible,button:focus-visible,select:focus-visible,.track:focus-visible,tbody tr:focus-visible{outline:2px solid var(--signal);outline-offset:1px}
-  .row2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
-
-  button{font:inherit;font-size:13px;padding:7px 12px;border-radius:4px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink)}
+    font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums}
+  .num{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;text-align:right;white-space:nowrap}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;white-space:nowrap}
+  header{background:var(--panel);border-bottom:1px solid var(--line);padding:12px 20px;
+    display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center}
+  header h1{margin:0;font-size:17px;font-weight:620;letter-spacing:-0.01em;margin-right:auto}
+  .filters{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+  .filters label{display:flex;flex-direction:column;font-size:11.5px;color:var(--ink-2);gap:2px}
+  .filters label.chk{flex-direction:row;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);padding-bottom:6px}
+  input[type=date],input[type=email],input[type=password],select{
+    padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--ink);font:inherit;font-size:13px}
+  button{font:inherit;font-size:13px;padding:6px 12px;border-radius:4px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink)}
   button:hover{border-color:#9FAEBB}
   button.primary{background:var(--signal);border-color:var(--signal);color:#fff;font-weight:560}
   button.primary:hover{background:#0B5A5A}
-  button.quiet{border-color:transparent;color:var(--ink-2);padding:4px 6px}
-  button.quiet:hover{color:var(--alert);background:var(--alert-bg)}
   button:disabled{opacity:.45;cursor:not-allowed}
-  .btnrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .hint{font-size:11.5px;color:var(--ink-2);margin:-4px 0 9px}
+  input:focus-visible,button:focus-visible,select:focus-visible,tbody tr:focus-visible,[role=tab]:focus-visible{outline:2px solid var(--signal);outline-offset:1px}
+  .who{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2)}
+  .led{width:8px;height:8px;border-radius:50%;background:#C0C8D0;flex:none}
+  .led[data-s="ok"]{background:var(--signal)} .led[data-s="err"]{background:var(--alert)}
 
-  .msg{margin-top:9px;font-size:12.5px;padding:7px 9px;border-radius:4px;display:none;word-break:break-word}
+  nav{display:flex;gap:2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto}
+  nav [role=tab]{border:none;border-bottom:2px solid transparent;border-radius:0;padding:10px 12px;background:none;color:var(--ink-2);white-space:nowrap}
+  nav [role=tab][aria-selected=true]{color:var(--ink);border-bottom-color:var(--signal);font-weight:560}
+  main{padding:16px 20px 40px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+  .bar h2{margin:0;font-size:15px;font-weight:600;margin-right:auto}
+  .note{font-size:12.5px;color:var(--ink-2);margin:6px 0 12px;max-width:980px}
+  .msg{font-size:12.5px;padding:7px 9px;border-radius:4px;margin:0 0 10px;display:none;max-width:980px}
   .msg.err{display:block;background:var(--alert-bg);color:var(--alert)}
   .msg.ok{display:block;background:#E8F2F0;color:var(--signal)}
+  .msg.info{display:block;background:var(--warn-bg);color:var(--warn)}
 
-  details.daygroup{border-bottom:1px solid var(--line-soft)}
-  details.daygroup > summary{cursor:pointer;padding:9px 18px;list-style-position:outside}
-  details.daygroup > summary:hover{background:#F2F5F7}
-  .dayline{display:inline-flex;align-items:baseline;justify-content:space-between;gap:10px;width:calc(100% - 18px)}
-  .dayline b{font-size:13px;font-weight:620}
-  .dayline em{font-style:normal;color:var(--ink-2);font-size:12px}
-  .reg{padding:0 18px 8px}
-  .regline{display:flex;align-items:baseline;justify-content:space-between;
-    padding:6px 0 4px;margin-bottom:4px;border-bottom:1px solid var(--line-soft)}
-  .regline b{font-size:11.5px;font-weight:600;color:var(--ink-2)}
-  .regline em{font-style:normal;color:var(--ink-2);font-size:11px}
-  .planrow.nested{margin-left:16px}
-  .track{display:flex;align-items:flex-start;gap:9px;padding:7px 8px;border-radius:4px;cursor:pointer;border:1px solid transparent;margin-bottom:2px}
-  .track:hover{background:#F2F5F7}
-  .track[data-on="1"]{background:#EDF4F3;border-color:#BBD7D4}
-  .dot{width:9px;height:9px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.15);margin-top:5px}
-  .track .who{flex:1;min-width:0}
-  .track .who b{display:block;font-weight:560;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .track .who > span{color:var(--ink-2);font-size:11.5px}
-  .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
-  .tag{font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid var(--line-soft);background:#F2F5F7;color:var(--ink-2);line-height:1.6}
-  button.tag{cursor:pointer}
-  button.tag:hover{border-color:#9FAEBB}
-  .tag.none{color:var(--alert);background:var(--alert-bg);border-color:#EFD8D8}
-  .tag.plan{background:#E8F2F0;color:var(--signal);border-color:#CBE2DE}
-  .regin{width:120px !important;padding:1px 5px !important;font-size:11.5px !important}
+  .tbl{background:var(--panel);border:1px solid var(--line);border-radius:4px;overflow-x:auto;margin-bottom:16px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th{font-weight:560;font-size:11.5px;color:var(--ink-2);text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);background:#F6F8FA;white-space:nowrap;vertical-align:bottom}
+  th.num{text-align:right;font-family:inherit;font-size:11.5px}
+  td{padding:6px 9px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  tbody tr.click{cursor:pointer} tbody tr.click:hover{background:#F2F5F7}
+  tr.total td{font-weight:600;background:#F6F8FA;border-top:1px solid var(--line)}
+  tr.sel td{background:#EDF4F3}
+  td.bad{color:var(--alert)} td.weak{color:var(--ink-2)}
+  .sev{display:inline-block;font-size:11px;padding:1px 6px;border-radius:3px;line-height:1.6;white-space:nowrap}
+  .sev1{background:var(--alert-bg);color:var(--alert)} .sev2{background:var(--warn-bg);color:var(--warn)} .sev3{background:#F2F5F7;color:var(--ink-2)}
+  .flag{display:inline-block;font-size:11px;padding:0 5px;margin:0 3px 2px 0;border-radius:3px;background:#F2F5F7;color:var(--ink-2);white-space:nowrap}
+  .flag.bad{background:var(--alert-bg);color:var(--alert)} .flag.warn{background:var(--warn-bg);color:var(--warn)}
+  .empty{padding:18px;color:var(--ink-2);font-size:13px}
 
-  .planrow{display:flex;align-items:flex-start;gap:9px;padding:6px 8px 7px;border-radius:4px;margin-bottom:2px;border:1px dashed var(--line);background:#FAFBFC}
-  .planrow .dot.plan{border-radius:2px;margin-top:4px}
-  .planrow .who{flex:1;min-width:0}
-  .planrow .who b{display:block;font-weight:560;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .planrow .who span{color:var(--ink-2);font-size:11.5px}
-  .planrow select{width:100%;margin-top:4px;padding:3px 5px;border:1px solid var(--line);border-radius:4px;font:inherit;font-size:11.5px;background:#fff;color:var(--ink)}
-  .empty{padding:22px 18px;color:var(--ink-2);font-size:13px}
-  .empty b{display:block;color:var(--ink);font-weight:560;margin-bottom:4px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:4px;margin-bottom:14px}
+  .kpi{background:var(--panel);padding:10px 12px}
+  .kpi b{display:block;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:18px;font-weight:600}
+  .kpi span{font-size:11.5px;color:var(--ink-2)}
 
-  details.cfg{border-bottom:1px solid var(--line-soft)}
-  details.cfg > summary{cursor:pointer;padding:12px 18px;font-size:12.5px;color:var(--ink-2)}
-  details.cfg .inner{padding:0 18px 14px}
-  details.help{padding:12px 18px 16px;border-top:1px solid var(--line-soft)}
-  details.help summary{cursor:pointer;font-size:12.5px;color:var(--ink-2)}
-  details.help ol{margin:9px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2);line-height:1.6}
-  details.help code{background:#F2F5F7;padding:1px 4px;border-radius:3px;font-size:11.5px}
-
-  .main{display:flex;flex-direction:column;min-width:0;min-height:0}
-  .bar{display:flex;gap:22px;align-items:center;flex-wrap:wrap;padding:11px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
-  .stat{display:flex;flex-direction:column;line-height:1.25}
-  .stat b{font-size:16px;font-weight:620}
-  .stat span{font-size:11.5px;color:var(--ink-2)}
-  .stat.warn b{color:var(--alert)}
-  .bar .spacer{flex:1}
-  .bar .ctl{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
-  .bar .ctl input{width:64px;padding:5px 7px;border:1px solid var(--line);border-radius:4px;font:inherit;font-size:13px}
-
-  #map{height:40vh;min-height:230px;background:#DFE4E9;border-bottom:1px solid var(--line)}
-  .tilewarn{position:absolute;z-index:500;left:10px;bottom:10px;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:4px;padding:6px 9px;font-size:12px;color:var(--ink-2);display:none}
-  .leaflet-container{font:inherit}
-  .leaflet-tooltip.gps{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;border-radius:4px;border-color:var(--line);color:var(--ink)}
-  .leaflet-tooltip.gps b{font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif;font-size:12px}
-
-  /* план: номер в тёмном кружке, факт остаётся цветными точками — формой тоже не спутать */
-  .planpin{background:none;border:0}
-  .planpin-dot{
-    display:flex;align-items:center;justify-content:center;width:22px;height:22px;
-    border-radius:4px;background:#111827;color:#fff;border:2px solid #fff;
-    font:600 11px/1 ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
-    box-shadow:0 0 0 1px rgba(0,0,0,.25);
-  }
-  .planpin-dot.miss{background:#fff;color:var(--alert);border-color:var(--alert)}
-  .planpin-dot.hot{transform:scale(1.35)}
-
-  /* факт: стоянки нумеруются по порядку — иначе на карте не понять, куда водитель ехал сначала */
-  .factpin{background:none;border:0}
-  .factpin-dot{
-    display:flex;align-items:center;justify-content:center;width:20px;height:20px;
-    border-radius:50%;background:var(--c);color:#fff;border:2px solid #fff;
-    font:600 10.5px/1 ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
-    box-shadow:0 0 0 1px rgba(0,0,0,.2);
-  }
-  .factpin-dot.start{background:#fff;color:var(--c);border-color:var(--c);box-shadow:0 0 0 2px var(--c)}
-  .factpin-dot.finish{box-shadow:0 0 0 3px var(--c)}
-  .factpin-dot.hot{transform:scale(1.35)}
-
-  .legend .chk2{display:flex;align-items:center;gap:5px;cursor:pointer}
-  .legend .chk2 input{width:auto;margin:0}
-  .legend .dim{color:var(--ink-2)}
-
-  .legend{display:flex;gap:14px;align-items:center;font-size:11.5px;color:var(--ink-2);padding:7px 20px;
-    background:var(--panel);border-bottom:1px solid var(--line-soft)}
-  .legend i{display:inline-block;font-style:normal}
-  .legend .l-plan::before{content:"";display:inline-block;width:12px;height:12px;vertical-align:middle;
-    background:#111827;border-radius:3px;margin-right:6px}
-  .legend .l-fact::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
-    border-top:3px solid var(--signal);margin-right:6px}
-  .legend .l-gap::before{content:"";display:inline-block;width:18px;height:0;vertical-align:middle;
-    border-top:2px dashed var(--alert);margin-right:6px}
-
-  #preview{margin-top:10px}
-  .prev{border:1px solid var(--line);border-radius:4px;padding:11px 12px;background:#FAFBFC}
-  .prev > b{font-size:13px}
-  .prevline{font-size:11.5px;color:var(--ink-2);margin-top:3px}
-  .prevline code{background:#EDF1F4;padding:1px 4px;border-radius:3px}
-  .prevwarn{font-size:12px;color:var(--alert);background:var(--alert-bg);border-radius:3px;padding:5px 7px;margin-top:6px}
-  .prev label.f{margin-top:9px}
-  .prev select{width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:4px;font:inherit;font-size:12px;background:#fff;color:var(--ink)}
-  label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);margin:7px 0 9px}
-  label.chk input{width:auto}
-  .prevtab{margin-bottom:10px}
-  details.fields{margin:0 0 10px}
-  details.fields summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
-  .fieldlist{max-height:210px;overflow:auto;margin-top:6px;border:1px solid var(--line-soft);border-radius:3px;background:#fff}
-  .fieldlist div{display:flex;gap:8px;padding:2px 7px;border-bottom:1px solid var(--line-soft);font-size:11px}
-  .fieldlist div:last-child{border-bottom:0}
-  .fieldlist code{font-size:11px;color:var(--signal);white-space:nowrap}
-  .fieldlist span{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .prevtab th{position:static;padding:4px 6px;font-size:11px;background:none}
-  .prevtab td{padding:3px 6px;font-size:11.5px;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis}
-
-  .tabs{display:flex;gap:2px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
-  .tablist{display:flex;gap:2px}
-  .tablist button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--ink-2);padding:9px 12px;font-size:12.5px}
-  .tablist button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--signal);font-weight:560}
-  .tabs .spacer{flex:1}
-  .tabs .side-btn{align-self:center}
-
-  .tablewrap{flex:1;overflow:auto;min-height:0;background:var(--panel)}
-  table{border-collapse:collapse;width:100%}
-  thead th{position:sticky;top:0;background:var(--panel);z-index:2;text-align:left;font-size:11.5px;font-weight:600;color:var(--ink-2);padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
-  thead th.r{text-align:right}
-  tbody td{padding:5px 12px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
-  #tb-points tr{cursor:pointer}
-  #tb-points tr:hover{background:#F2F5F7}
-  tbody tr[data-gap="1"] td{background:var(--alert-bg)}
-  #tb-points tr[data-gap="1"]:hover td{background:#F6E2E2}
-  tbody tr.sub td{background:#F2F5F7;font-weight:560}
-  tbody tr.tot td{background:#EDF4F3;font-weight:620;border-bottom:0}
-  td.r{text-align:right}
-  td.who{max-width:210px;overflow:hidden;text-overflow:ellipsis}
-  td.dim{color:var(--ink-2)}
-  .swatch{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
-  .tblempty{padding:26px 20px;color:var(--ink-2);max-width:820px;line-height:1.6}
-  .tblempty b{display:block;color:var(--ink);font-weight:560;margin-bottom:5px;font-size:14px}
-  .tblempty code{background:#F2F5F7;padding:1px 5px;border-radius:3px;font-size:12px}
-  .note{padding:10px 20px;font-size:12.5px;color:var(--ink-2);border-bottom:1px solid var(--line-soft);background:#FAFBFC}
-  .note.warn{color:var(--alert);background:var(--alert-bg)}
-
-  @media (max-width:900px){
-    .shell{grid-template-columns:1fr;height:auto}
-    .side{border-right:0;border-bottom:1px solid var(--line)}
-    #map{height:52vh}
-  }
-  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  #loginbox{max-width:360px;margin:60px auto;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:20px}
+  #loginbox h2{margin:0 0 12px;font-size:15px}
+  #loginbox label{display:block;font-size:12px;color:var(--ink-2);margin-bottom:10px}
+  #loginbox input{width:100%;margin-top:3px}
+  @media (max-width:640px){ header,main,nav{padding-left:16px;padding-right:16px} }
 </style>
 </head>
 <body>
-<div class="shell">
+<header>
+  <h1>Аналитика км · Dextra</h1>
+  <div class="filters" id="filters" hidden>
+    <label>С <input type="date" id="f-from"></label>
+    <label>По <input type="date" id="f-to"></label>
+    <label>Город <select id="f-city"><option value="">все</option></select></label>
+    <label class="chk"><input type="checkbox" id="f-stable" checked> без обкатки</label>
+    <button id="btn-load" class="primary">Показать</button>
+  </div>
+  <div class="who"><span class="led" id="led"></span><span id="conn">вход не выполнен</span>
+    <button id="btn-logout" hidden>Выйти</button></div>
+</header>
 
-  <aside class="side">
-    <div class="side-head">
-      <h1>Треки водителей</h1>
-      <p><span class="led" id="led"></span><span id="conn">проверка входа…</span>
-        <button class="quiet" id="btn-logout" hidden>Выйти</button></p>
-    </div>
+<form id="loginbox" hidden>
+  <h2>Вход</h2>
+  <label>Почта <input type="email" id="in-email" autocomplete="username" required></label>
+  <label>Пароль <input type="password" id="in-pass" autocomplete="current-password" required></label>
+  <button class="primary" id="btn-login">Войти</button>
+  <p class="msg" id="msg-login" role="alert"></p>
+</form>
 
-    <div class="side-scroll">
-      <form class="block" id="loginbox" hidden>
-        <h2>Вход</h2>
-        <label class="f"><span>Почта</span>
-          <input type="email" id="in-email" autocomplete="username" spellcheck="false"></label>
-        <label class="f"><span>Пароль</span>
-          <input type="password" id="in-pass" autocomplete="current-password"></label>
-        <div class="btnrow">
-          <button class="primary" id="btn-login" type="submit">Войти</button>
-        </div>
-        <div class="msg" id="msg-login"></div>
-      </form>
+<div id="authed" hidden>
+  <nav role="tablist" aria-label="Разделы">
+    <button role="tab" id="t-sum" aria-controls="p-sum" aria-selected="true">Сводка</button>
+    <button role="tab" id="t-anom" aria-controls="p-anom" aria-selected="false">Аномалии</button>
+    <button role="tab" id="t-drv" aria-controls="p-drv" aria-selected="false">Водители</button>
+    <button role="tab" id="t-rt" aria-controls="p-rt" aria-selected="false">Маршруты</button>
+    <button role="tab" id="t-sync" aria-controls="p-sync" aria-selected="false">Загрузка</button>
+    <button role="tab" id="t-cfg" aria-controls="p-cfg" aria-selected="false">Настройки</button>
+  </nav>
+  <main>
+    <p class="msg" id="msg" aria-live="polite"></p>
 
-      <div id="authed" hidden>
-      <datalist id="dl-regions"></datalist>
+    <section role="tabpanel" id="p-sum" aria-labelledby="t-sum">
+      <div class="bar"><h2>Сводка по городам</h2><button data-csv="sum">CSV</button></div>
+      <div class="kpis" id="kpis"></div>
+      <div class="tbl" id="tbl-sum"></div>
+      <p class="note" id="note-sum"></p>
+    </section>
 
-      <div class="block">
-        <h2>Добавить трек (факт)</h2>
-        <div class="row2">
-          <label class="f"><span>Водитель</span><input type="text" id="in-driver" placeholder="Фамилия Имя" autocomplete="off"></label>
-          <label class="f"><span>Гос. номер</span><input type="text" id="in-plate" placeholder="01A123BC" autocomplete="off"></label>
-        </div>
-        <label class="f"><span>Регион</span><input type="text" id="in-region" list="dl-regions" placeholder="Фергана" autocomplete="off"></label>
-        <label class="f"><span>JSON ответа history</span>
-          <textarea id="in-json" placeholder='{"items":[{"coordinates":[70.8977705,40.5276283],"bearingDegrees":348,"recordedAt":"2026-09-07T05:08:17.907Z"}, ...]}'></textarea>
-        </label>
-        <div class="btnrow">
-          <button class="primary" id="btn-add">Добавить трек</button>
-          <button id="btn-file">Из файла</button>
-          <input type="file" id="in-file" accept=".json,.txt" hidden>
-        </div>
-        <div class="msg" id="msg"></div>
-      </div>
+    <section role="tabpanel" id="p-anom" aria-labelledby="t-anom" hidden>
+      <div class="bar"><h2>Что разбирать</h2>
+        <select id="f-sev" aria-label="Какие аномалии показывать">
+          <option value="2">высокая и средняя</option><option value="1">только высокая</option><option value="3">все, включая инфо</option>
+        </select>
+        <button data-csv="anom">CSV</button></div>
+      <div class="tbl" id="tbl-anom"></div>
+      <div class="tbl" id="tbl-anom-legend"></div>
+    </section>
 
-      <details class="cfg" id="planbox">
-        <summary>Добавить план (шапка маршрута)</summary>
-        <div class="inner">
-          <p class="hint">Без JSON запишется только шапка: этого хватает на план / факт / Δ по километражу. С JSON появятся остановки — плановые точки на карте и сверка по каждой из них.</p>
-          <div class="row2">
-            <label class="f"><span>Водитель</span><input type="text" id="p-driver" placeholder="Фамилия Имя" autocomplete="off"></label>
-            <label class="f"><span>Дата маршрута</span><input type="date" id="p-date"></label>
-          </div>
-          <div class="row2">
-            <label class="f"><span>Гос. номер</span><input type="text" id="p-plate" placeholder="01A123BC" autocomplete="off"></label>
-            <label class="f"><span>Регион</span><input type="text" id="p-region" list="dl-regions" placeholder="Фергана" autocomplete="off"></label>
-          </div>
-          <div class="row2">
-            <label class="f"><span>Плановый пробег, км</span><input type="text" id="p-km" placeholder="34.15" inputmode="decimal" autocomplete="off"></label>
-            <label class="f"><span>ID маршрута</span><input type="text" id="p-ext" placeholder="6a9ac12a519e…" autocomplete="off"></label>
-          </div>
-          <label class="f"><span>JSON ответа с планом (необязательно)</span>
-            <textarea id="p-json" placeholder="Вставьте ответ запроса с маршрутом — инструмент сам найдёт остановки и покажет, что распознал, до записи в базу."></textarea>
-          </label>
-          <div class="btnrow">
-            <button class="primary" id="btn-addplan">Добавить план</button>
-            <button id="btn-planfile">Из файла</button>
-            <input type="file" id="p-file" accept=".json,.txt" hidden>
-          </div>
-          <div class="msg" id="msg-plan"></div>
-          <div id="preview" hidden></div>
-        </div>
-      </details>
+    <section role="tabpanel" id="p-drv" aria-labelledby="t-drv" hidden>
+      <div class="bar"><h2>Водители</h2><button data-csv="drv">CSV</button></div>
+      <p class="note">Первая колонка — покрытие GPS: где трекер в телефоне молчал, факт км Dextra занижен и выводы о водителе делать нельзя. Факт / план — только по маршрутам с покрытием не ниже порога.</p>
+      <div class="tbl" id="tbl-drv"></div>
+    </section>
 
-      <div id="list"></div>
-      </div>
-    </div>
+    <section role="tabpanel" id="p-rt" aria-labelledby="t-rt" hidden>
+      <div class="bar"><h2>Маршруты</h2><button data-csv="rt">CSV</button></div>
+      <div class="tbl" id="tbl-rt"></div>
+      <div id="route-detail"></div>
+    </section>
 
-    <details class="help">
-      <summary>Как выгрузить данные из маршрутизатора</summary>
-      <ol>
-        <li>Откройте карточку маршрута, F12 → вкладка «Сеть», фильтр Fetch/XHR.</li>
-        <li>Нажмите «Пересчитать GPS-метрики».</li>
-        <li>Найдите запрос <code>history?courierId=…</code>.</li>
-        <li>Правой кнопкой → Копировать → Копировать ответ.</li>
-        <li>Вставьте сюда, впишите водителя и регион, нажмите «Добавить трек».</li>
-        <li>Плановый километраж возьмите из карточки маршрута и внесите в «Добавить план».</li>
-      </ol>
-    </details>
-  </aside>
+    <section role="tabpanel" id="p-sync" aria-labelledby="t-sync" hidden>
+      <div class="bar"><h2>Загрузка данных</h2></div>
+      <p class="note">Маршруты загружаются автоматически каждый день в 20:00 по Ташкенту: сегодняшний день и три предыдущих.</p>
+      <div class="tbl" id="tbl-sync-city"></div>
+      <div class="tbl" id="tbl-sync"></div>
+    </section>
 
-  <main class="main">
-    <div class="bar" id="bar"></div>
-
-    <div id="map"></div>
-    <div class="tilewarn" id="tilewarn">Подложка карты не загрузилась. Точки и трек показаны.</div>
-    <div class="legend">
-      <label class="chk2"><input type="checkbox" id="ly-plan" checked><i class="l-plan">план: тёмные квадраты с номерами</i></label>
-      <label class="chk2"><input type="checkbox" id="ly-fact" checked><i class="l-fact">факт: трек и кружки стоянок по порядку</i></label>
-      <label class="chk2"><input type="checkbox" id="ly-gap" checked><i class="l-gap">подсветить разрывы: трекер молчал, а машина уехала</i></label>
-      <i class="dim">белый номер в красной рамке — на эту точку водитель не приезжал</i>
-    </div>
-
-    <div class="tabs">
-      <div class="tablist" role="tablist" aria-label="Таблицы">
-        <button role="tab" id="tab-stops" aria-selected="true" aria-controls="pane-stops">План / факт по точкам</button>
-        <button role="tab" id="tab-points" aria-selected="false" aria-controls="pane-points">Точки трека</button>
-        <button role="tab" id="tab-sum" aria-selected="false" aria-controls="pane-sum">Сводка за день</button>
-      </div>
-      <span class="spacer"></span>
-      <button class="side-btn" id="btn-csv">Скачать CSV</button>
-    </div>
-
-    <div class="tablewrap" id="pane-stops" role="tabpanel" aria-labelledby="tab-stops">
-      <div class="note" id="stops-note" style="display:none"></div>
-      <table>
-        <thead><tr>
-          <th>№</th><th>Водитель</th><th>Адрес</th>
-          <th class="r">План</th><th class="r">Отметка</th><th class="r">Факт по GPS</th>
-          <th class="r">Отклонение</th><th class="r">Точность</th><th class="r">Расстояние</th><th>Приезжал</th>
-        </tr></thead>
-        <tbody id="tb-stops"></tbody>
-      </table>
-      <div class="tblempty" id="empty-stops">Здесь появится сверка по каждой плановой точке: приезжал ли водитель и насколько опоздал. Нужен план с остановками — загрузите JSON в «Добавить план».</div>
-    </div>
-
-    <div class="tablewrap" id="pane-points" role="tabpanel" aria-labelledby="tab-points" hidden>
-      <div class="note" id="points-note" style="display:none"></div>
-      <table>
-        <thead><tr>
-          <th>№</th><th>Водитель</th><th>Время</th><th>Широта</th><th>Долгота</th>
-          <th class="r">Курс</th><th class="r">Пауза</th><th class="r">Отрезок</th><th class="r">Пробег</th>
-        </tr></thead>
-        <tbody id="tb-points"></tbody>
-      </table>
-      <div class="tblempty" id="empty-points">Выберите трек слева — точки появятся здесь.</div>
-    </div>
-
-    <div class="tablewrap" id="pane-sum" role="tabpanel" aria-labelledby="tab-sum" hidden>
-      <div class="note" id="sum-note" style="display:none"></div>
-      <table>
-        <thead><tr>
-          <th>Дата</th><th>Регион</th><th>Водитель</th><th>Гос. номер</th>
-          <th class="r">Точек</th><th class="r">Покрытие</th><th class="r">Разрывов</th>
-          <th class="r">Факт, км</th><th class="r">Из них на разрывах</th>
-          <th class="r">План, км</th><th class="r">Δ, км</th><th class="r">Δ, %</th>
-        </tr></thead>
-        <tbody id="tb-sum"></tbody>
-      </table>
-      <div class="tblempty" id="empty-sum">Выберите трек слева — сводка появится здесь.</div>
-    </div>
+    <section role="tabpanel" id="p-cfg" aria-labelledby="t-cfg" hidden>
+      <div class="bar"><h2>Настройки расчёта</h2></div>
+      <p class="note">Пороги и границы рабочего дня. Пока меняются в базе (таблица settings).</p>
+      <div class="tbl" id="tbl-cfg"></div>
+    </section>
   </main>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
-        integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
 <script>
 /* ============ константы ============ */
 /* Публичный ключ проекта. Сам по себе не даёт ничего: политики в базе выданы
-   роли authenticated, то есть работает только сессия вошедшего пользователя. */
+   роли authenticated и белому списку, работает только сессия вошедшего. */
 const SUP_URL  = 'https://zbqjblrnbnsutpbtmqdi.supabase.co';
 const SUP_KEY  = 'sb_publishable_7utpAna6hOrviqWFqB7J0A_kH3WDCpD';
-const SESS_KEY = 'gpstreki-session';   // токены входа
-const SET_KEY  = 'gpstreki-set';       // смещение зоны и порог разрыва
-const BATCH    = 500;                  // строк в одном POST
-const MAX_JSON_BYTES = 25 * 1024 * 1024;
-const MAX_POINTS     = 200000;         // за день реальный трек — сотни точек, не сотни тысяч
-const COLORS   = ['#0F6E6E','#B4531A','#3B5BA5','#7A4E9E','#1F7A3D','#A63D40','#8A6D1F','#186C8C'];
-const NO_REGION = 'Регион не указан';
-const PLAN_COLOR = '#111827';          // план — один цвет на всех, факт остаётся цветным
-const MAX_STOPS  = 2000;
-const MATCH_RADIUS_M = 200;            // радиус, в котором точка засчитывается за приезд
-const MAX_RAW_BYTES  = 2 * 1024 * 1024; // предел на исходник, который кладём в route_plans.raw
-const MIN_PAUSE_MIN  = 1;              // короче этой паузы точки в таблицу и на карту не идут
-/* Длинная пауза сама по себе не разрыв. Если машина осталась на месте — это стоянка,
-   и мы знаем, где водитель был. Разрыв — когда трекер молчал, а машина уехала: вот там
-   прямая линия и есть выдумка. */
-const GAP_MIN_M = 250;
-/* Настоящая стоянка: машина не уходила дальше DWELL_MAX_M дольше DWELL_MIN_S.
-   Интервал между точками трека тут ни при чём — он просто частота записи. */
-const DWELL_MIN_S = 180;
-const DWELL_MAX_M = 100;
+const SESS_KEY = 'gpstreki-session';     // тот же ключ, что у прежней страницы: вход сохраняется
+const UI_KEY   = 'analitika-km-ui';      // фильтры этого браузера
+const TZ       = 'Asia/Tashkent';
+const TZ_OFFSET = '+05:00';              // Ташкент без летнего времени
+const PAGE     = 1000;                   // PostgREST отдаёт не больше 1000 строк за раз
+const DEFAULT_DAYS = 14;
+const CITY_NAMES = { FERGHANA:'Фергана', KOKAND:'Коканд', NAMANGAN:'Наманган', ANDIJAN:'Андижан' };
+const SEV_NAMES  = { 1:'высокая', 2:'средняя', 3:'инфо' };
+/* без них часть проверок молча выключится — страница говорит об этом вслух */
+const REQUIRED_SETTINGS = ['a5_coverage_min', 'a6_coverage_min', 'a7_quick_close_sec', 'a8_batch_points', 'a9_idle_min',
+  'a11_ratio_min', 'a12_min_km', 'a12_min_legs', 'a12_speed_kmh', 'day_end_ceiling', 'day_start_floor',
+  'dextra_return_fix_date', 'return_cap_minutes'];
 
 /* ============ хранилище (только этот браузер) ============ */
-/* Только localStorage. Прежняя ветка через window.storage убрана: здесь лежат
-   токены сессии, и подменяемый снаружи объект решал бы, куда они попадут. */
 const local = (() => {
   try { localStorage.setItem('__t','1'); localStorage.removeItem('__t');
-    return { async get(k){ return localStorage.getItem(k); }, async set(k,v){ localStorage.setItem(k,v); } };
-  } catch(e){ const m={}; return { async get(k){ return m[k] ?? null; }, async set(k,v){ m[k]=v; } }; }
+    return { get:k => localStorage.getItem(k), set:(k,v) => localStorage.setItem(k,v) };
+  } catch(e){ const m = {}; return { get:k => m[k] ?? null, set:(k,v) => { m[k] = v; } }; }
 })();
 
 /* ============ сессия ============ */
 let session = null;   // { access_token, refresh_token, expires_at, email }
+/* Номер «эпохи» входа: обновление токена, завершившееся после выхода, не должно
+   записать сессию обратно. */
+let authEpoch = 0;
+
+class AuthError extends Error {
+  constructor(message, status){ super(message); this.status = status; }
+}
+/* 400/401 от сервера входа — токен действительно недействителен; всё остальное
+   (сеть, 5xx) — временное, и сессию из-за него выбрасывать нельзя */
+const isAuthRejection = e => e instanceof AuthError && (e.status === 400 || e.status === 401);
 
 async function auth(grant, body){
   const res = await fetch(`${SUP_URL}/auth/v1/token?grant_type=${grant}`, {
-    method: 'POST',
-    headers: { 'apikey': SUP_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    method:'POST', headers:{ 'apikey':SUP_KEY, 'Content-Type':'application/json' }, body:JSON.stringify(body)
   });
   const text = await res.text();
   let j = null;
   try { j = text ? JSON.parse(text) : null; } catch(e){}
   if (!res.ok){
     const raw = (j && (j.error_description || j.msg || j.message)) || text || ('код ' + res.status);
-    throw new Error(authMessage(res.status, String(raw)));
+    throw new AuthError(authMessage(res.status, String(raw)), res.status);
   }
   return {
-    access_token: j.access_token,
-    refresh_token: j.refresh_token,
-    expires_at: j.expires_at ? j.expires_at*1000 : Date.now() + (j.expires_in || 3600)*1000,
-    email: (j.user && j.user.email) || (session && session.email) || ''
+    access_token:j.access_token, refresh_token:j.refresh_token,
+    expires_at:j.expires_at ? j.expires_at*1000 : Date.now() + (j.expires_in || 3600)*1000,
+    email:(j.user && j.user.email) || (session && session.email) || ''
   };
 }
 /* ответы Supabase приходят по-английски, а инструмент русский */
@@ -443,1840 +217,713 @@ function authMessage(status, raw){
   const r = raw.toLowerCase();
   if (r.includes('invalid login credentials')) return 'Неверная почта или пароль.';
   if (r.includes('email not confirmed'))       return 'Почта не подтверждена. Подтвердите пользователя в панели Supabase.';
-  if (r.includes('invalid refresh token') || r.includes('refresh_token_not_found'))
-    return 'Сессия истекла, войдите заново.';
+  if (r.includes('invalid refresh token') || r.includes('refresh_token_not_found')) return 'Сессия истекла, войдите заново.';
   if (status === 400 || status === 401) return 'Вход не принят: ' + raw;
   if (status === 429) return 'Слишком много попыток входа, подождите минуту.';
   return 'Сервер входа ответил ошибкой (' + status + '): ' + raw;
 }
+function saveSession(s, epoch){
+  if (epoch !== undefined && epoch !== authEpoch) return;   // пока ждали ответ, пользователь вышел
+  session = s; local.set(SESS_KEY, JSON.stringify(s));
+}
+function dropSession(){ session = null; local.set(SESS_KEY, ''); }
 
-async function saveSession(s){ session = s; await local.set(SESS_KEY, JSON.stringify(s)); }
-async function dropSession(){ session = null; await local.set(SESS_KEY, ''); }
-
-/* Обновление токена одно на всех. renderAll можно запустить в несколько потоков
-   (быстрые клики по трекам), и два одновременных обновления с одним и тем же
-   refresh-токеном при включённой ротации дадут отказ второму — он выкинул бы
-   пользователя на вход посреди работы. */
+/* Обновление токена одно на всех: два параллельных обновления одним refresh-токеном
+   при ротации дадут отказ второму и выкинут пользователя посреди работы. */
 let refreshing = null;
 function refreshNow(){
   if (!refreshing){
-    refreshing = auth('refresh_token', { refresh_token: session.refresh_token })
-      .then(saveSession)
-      .finally(() => { refreshing = null; });
+    const epoch = authEpoch;
+    refreshing = auth('refresh_token', { refresh_token:session.refresh_token })
+      .then(s => saveSession(s, epoch)).finally(() => { refreshing = null; });
   }
   return refreshing;
 }
-
-/* токен живёт час: обновляем заранее, чтобы не ловить 401 посреди заливки точек */
 async function freshToken(){
   if (!session) throw new Error('Нужно войти.');
   if (session.expires_at - Date.now() > 60e3) return session.access_token;
   await refreshNow();
+  if (!session) throw new Error('Нужно войти.');
   return session.access_token;
 }
 
 /* ============ клиент PostgREST ============ */
-async function api(path, opts){
+async function api(path){
   if (!session) throw new Error('Нужно войти.');
-  const call = async token => fetch(SUP_URL + '/rest/v1/' + path, Object.assign({}, opts, {
-    headers: Object.assign({
-      'apikey': SUP_KEY,
-      'Authorization': 'Bearer ' + token,
-      'Content-Type': 'application/json'
-    }, (opts && opts.headers) || {})
-  }));
-
-  const used = await freshToken();
+  const call = token => fetch(SUP_URL + '/rest/v1/' + path, {
+    headers:{ 'apikey':SUP_KEY, 'Authorization':'Bearer ' + token, 'Accept':'application/json' }
+  });
+  /* отказ сервера входа при обновлении токена — сессия мертва: на вход, а не по кругу */
+  const expired = async () => { await signOut('Сессия истекла, войдите заново.'); return new Error('Сессия истекла.'); };
+  let used;
+  try { used = await freshToken(); }
+  catch(e){ if (isAuthRejection(e)) throw await expired(); throw e; }
   let res = await call(used);
   if (res.status === 401){
-    /* токен мог протухнуть раньше срока. Если соседний запрос уже обновил сессию,
-       просто повторяем с новым токеном, не запрашивая ещё одно обновление. */
     try {
-      if (session.access_token === used) await refreshNow();
-      res = await call(session.access_token);
-    } catch(e){ await signOut('Сессия истекла, войдите заново.'); throw new Error('Сессия истекла.'); }
+      if (session && session.access_token === used) await refreshNow();
+    } catch(e){
+      if (isAuthRejection(e)) throw await expired();
+      throw new Error('Нет связи с сервером входа: ' + e.message);
+    }
+    if (!session) throw new Error('Нужно войти.');
+    res = await call(session.access_token);
+    if (res.status === 401) throw await expired();
   }
   const text = await res.text();
   if (!res.ok){
     let detail = text;
     try { const j = JSON.parse(text); detail = j.message || j.hint || text; } catch(e){}
-    if (res.status === 404) detail = 'Таблицы не найдены. Выполните SQL создания схемы в SQL Editor.';
-    if (res.status === 401 || res.status === 403) detail = 'Доступ закрыт. Похоже, у вашего пользователя нет прав на эту операцию.';
+    if (res.status === 404) detail = 'Таблица или представление не найдены — в базе не применена миграция.';
+    if (res.status === 403) detail = 'Доступ закрыт: у вашего пользователя нет прав на чтение.';
     throw new Error(res.status + ': ' + detail);
   }
-  return text ? JSON.parse(text) : null;
+  return text ? JSON.parse(text) : [];
 }
-/* значение для фильтра PostgREST: запятая и точка в фамилии ломают eq. без кавычек */
-function pgq(v){
-  return encodeURIComponent('"' + String(v).replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"');
+/* Всё, что больше одной страницы PostgREST, — порциями. Порядок в path обязан быть
+   однозначным (с уникальным ключом в конце), иначе на стыке страниц строки
+   задвоятся или пропадут. */
+async function apiAll(path){
+  const out = [];
+  for (let offset = 0; ; offset += PAGE){
+    const part = await api(`${path}${path.includes('?') ? '&' : '?'}limit=${PAGE}&offset=${offset}`);
+    out.push(...part);
+    if (part.length < PAGE) return out;
+  }
 }
-/* uuid из ответа базы — подставляется как есть, кодирование на случай смены типа ключа */
-const pgid = v => encodeURIComponent(String(v));
-
-/* ============ состояние ============ */
-let index = [], plans = [], cache = {}, stopsCache = {}, routeCache = {}, selected = new Set();
-let map, factLayer, planLayer, markers = [], planMarkers = [];
-let renderSeq = 0;           // защита от наложения рендеров при быстром переключении
-let editingRegion = null;    // id трека, у которого сейчас правят регион
-let lastSummary = [];        // строки сводки для CSV
-let lastPlanFact = [];       // строки «план / факт» по остановкам для CSV
-let draft = null;            // разобранный, но ещё не записанный план
+const q = v => encodeURIComponent(String(v));
 
 /* ============ утилиты ============ */
-const R = 6371008.8, rad = d => d*Math.PI/180;
-function haversine(a,b){
-  const dLat = rad(b.lat-a.lat), dLon = rad(b.lon-a.lon);
-  const h = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;
-  return 2*R*Math.asin(Math.sqrt(h));
-}
-const tz = () => Number(document.getElementById('in-tz').value) || 0;
-const gapSec = () => Math.max(1, Number(document.getElementById('in-gap').value) || 3) * 60;
-const pauseSec = () => Math.max(0, Number(document.getElementById('in-pause').value) || 0) * 60;
-const radiusM = () => Math.max(10, Number(document.getElementById('in-radius').value) || MATCH_RADIUS_M);
-const shifted = iso => new Date(new Date(iso).getTime() + tz()*3600e3);
-const p2 = n => String(n).padStart(2,'0');
-const hhmmss = iso => { const d = shifted(iso); return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds()); };
-const hhmm = iso => { const d = shifted(iso); return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes()); };
-const dateKey = iso => { const d = shifted(iso); return d.getUTCFullYear()+'-'+p2(d.getUTCMonth()+1)+'-'+p2(d.getUTCDate()); };
-const dateHuman = k => { const [y,m,d] = String(k).split('-'); return d+'.'+m+'.'+y; };
-function dur(sec){
-  sec = Math.round(sec);
-  if (sec < 60) return sec + ' с';
-  const m = Math.floor(sec/60), s = sec%60;
-  if (m < 60) return m + ' мин' + (s ? ' ' + s + ' с' : '');
-  return Math.floor(m/60) + ' ч ' + p2(m%60) + ' мин';
-}
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const km = m => (m/1000).toFixed(2);
-/* 1 точка, 2 точки, 5 точек */
-function plural(n, forms){
-  const a = Math.abs(n) % 100, b = a % 10;
-  return n + ' ' + (a > 10 && a < 20 ? forms[2] : b > 1 && b < 5 ? forms[1] : b === 1 ? forms[0] : forms[2]);
-}
-const nPoints = n => plural(n, ['точка','точки','точек']);
-const nTracks = n => plural(n, ['трек','трека','треков']);
-const nPlans  = n => plural(n, ['план','плана','планов']);
-function say(id, text, kind){
-  const el = document.getElementById(id);
-  el.textContent = text; el.className = 'msg ' + kind;
-  if (kind === 'ok') setTimeout(() => { el.className = 'msg'; }, 4000);
-}
-function conn(state, text){
-  document.getElementById('led').dataset.s = state;
-  document.getElementById('conn').textContent = text;
-}
-/* «фергана » и «Фергана» должны стать одним регионом, но написание уже введённого не переписываем */
-function knownRegions(){
-  const all = index.map(r => r.region).concat(plans.map(p => p.region));
-  return [...new Set(all.filter(Boolean))].sort((a,b) => a.localeCompare(b,'ru'));
-}
-function normRegion(v){
-  const s = String(v ?? '').trim().replace(/\s+/g,' ');
-  if (!s) return null;
-  const hit = knownRegions().find(k => k.toLowerCase() === s.toLowerCase());
-  return hit || s;
-}
-function numOrNull(v){
-  const s = String(v ?? '').trim().replace(',', '.');
-  if (!s) return null;
-  const n = Number(s);
-  return isFinite(n) ? n : NaN;
-}
-
-/* ============ разбор JSON трека ============ */
-function parseTrack(raw){
-  if (raw.length > MAX_JSON_BYTES)
-    throw new Error(`Файл больше ${Math.round(MAX_JSON_BYTES/1048576)} МБ — столько трек за день не весит, похоже, скопировано что-то другое.`);
-  let data;
-  try { data = JSON.parse(raw); }
-  catch(e){ throw new Error('Это не JSON. Скопируйте ответ запроса целиком, вместе с внешними фигурными скобками.'); }
-  let items = Array.isArray(data) ? data
-            : data.items || data.points || data.track
-            || (data.data && (data.data.items || data.data.points)) || null;
-  if (!Array.isArray(items)) throw new Error('В JSON нет массива items с точками.');
-  if (items.length > MAX_POINTS)
-    throw new Error(`Точек ${items.length}, предел ${MAX_POINTS} — похоже на повреждённый или склеенный файл.`);
-
-  const pts = [];
-  for (const it of items){
-    if (!it || typeof it !== 'object') continue;
-    let lat, lon;
-    if (Array.isArray(it.coordinates) && it.coordinates.length >= 2){ lon = +it.coordinates[0]; lat = +it.coordinates[1]; }
-    else if (Array.isArray(it.point) && it.point.length >= 2){ lon = +it.point[0]; lat = +it.point[1]; }
-    else { lat = +(it.lat ?? it.latitude); lon = +(it.lon ?? it.lng ?? it.longitude); }
-    const t = it.recordedAt || it.time || it.timestamp || it.ts || it.recorded_at;
-    if (!isFinite(lat) || !isFinite(lon) || !t) continue;
-    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
-    const ms = new Date(t).getTime();
-    if (!isFinite(ms)) continue;
-    const b = Number(it.bearingDegrees ?? it.bearing ?? it.course);
-    pts.push({ t: new Date(ms).toISOString(), lat, lon, bearing: isFinite(b) ? b : NaN });
+function h(tag, attrs, ...kids){
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})){
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : v);
   }
-  if (!pts.length) throw new Error('Точки не распознаны: нет пар координат со временем.');
-  pts.sort((a,b) => a.t < b.t ? -1 : 1);
-  return pts;
-}
-
-/* ============ разбор JSON плана ============ */
-/* Структура ответа маршрутизатора заранее неизвестна, поэтому массив остановок
-   ищем перебором, а результат перед записью показываем человеку. Угадывать молча
-   нельзя: из этих данных считается отчёт по километражу. */
-const LAT_KEYS  = ['lat','latitude','широта'];
-const LON_KEYS  = ['lon','lng','long','longitude','долгота'];
-const GEO_KEYS  = ['coordinates','coords','point','location','position','geo','latlng'];
-/* Сильные имена ищем первыми по всей глубине, слабые — только если сильных нет.
-   Иначе generic-ключ вроде «time» или «id» перебьёт настоящее плановое время. */
-const TIME_STRONG = ['plannedarrival','arrivaltime','arrival','planarrival','eta','estimatedarrival',
-                     'arrivalat','planneddate','plantime','arrivaldate','expectedarrival',
-                     'expectedarrivalat','expectedarrivaltime','plannedat','planarrivalat',
-                     'arriveat','estimatedtimeofarrival','expectedat'];
-const TIME_WEAK   = ['timefrom','starttime','begin','from','start','time','datetime'];
-const TIME_KEYS   = TIME_STRONG.concat(TIME_WEAK);
-const OUT_KEYS  = ['planneddeparture','departuretime','departure','timeto','endtime','end','to'];
-const ADDR_STRONG = ['address','addressline','fulladdress','addresstext','adres','адрес'];
-const ADDR_WEAK   = ['location','place'];
-const ADDR_KEYS   = ADDR_STRONG.concat(ADDR_WEAK);
-const ID_STRONG = ['orderid','externalid','externalorderid','externalnumber'];
-const ID_WEAK   = ['order','number','code','id','номер'];
-const ID_KEYS   = ID_STRONG.concat(ID_WEAK);
-const NAME_KEYS = ['label','name','title','caption','client','counterparty','наименование'];
-/* шапка маршрута: плановый километраж и геометрия планового пути */
-const DIST_KEYS = ['expecteddistancemeters','planneddistancemeters','distancemeters',
-                   'expecteddistance','planneddistance','totaldistance','distance'];
-const POLY_KEYS = ['expectedgeometrypolyline','geometrypolyline','geometry_polyline',
-                   'overviewpolyline','polyline','encodedpolyline'];
-const SERV_KEYS = ['serviceseconds','servicedurationseconds','servicedurations','servicedurationsec',
-                   'servicetime','servicetimes','serviceduration','duration','handlingtime',
-                   'loadingtime','unloadingtime'];
-const STAT_KEYS = ['status','state','result','статус'];
-/* отметка о приезде, которую поставил сам маршрутизатор — не плановое время */
-const REPORT_KEYS = ['arrivedat','actualarrival','factarrival','arrivedtime','arrivalfact'];
-/* склад и финиш — не клиентские точки: из нумерации их надо убрать,
-   иначе номера разъедутся с тем, что показывает маршрутизатор */
-const TERMINAL_RE = /^(start|finish|end|depot|warehouse|base|склад|старт|финиш)$/;
-const KIND_KEYS = ['type','kind','actiontype','pointtype'];
-
-const low = s => String(s).toLowerCase().replace(/[_\s-]/g,'');
-/* Обход чужого JSON только на чтение: Object.keys даёт собственные ключи, а значения
-   никуда не присваиваются. Ключ «__proto__» из JSON.parse — обычное поле, не акцессор.
-   Если когда-нибудь захочется упростить buildStops до {...o} — вот здесь и появится
-   прототипное загрязнение, которого сейчас нет. */
-/* Порядок имён в списке — это приоритет. Перебирать надо именно его, а не ключи
-   объекта: рядом с expectedDistanceMeters лежит пустой distanceMeters, и по
-   порядку ключей выигрывал пустой. */
-function pick(obj, names){
-  const keys = Object.keys(obj);
-  for (const n of names){
-    const k = keys.find(x => low(x) === n);
-    if (k !== undefined) return k;
+  for (const kid of kids.flat()){
+    if (kid === null || kid === undefined || kid === false) continue;
+    e.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   }
-  return null;
+  return e;
 }
-/* Поля остановки лежат не обязательно на верхнем уровне: в реальных ответах это
-   что-нибудь вроде action.order.address.point. Ищем вглубь, но с ограничением и
-   мимо служебных дат — createdAt плановым временем быть не должен. */
-const SKIP_DEEP = /^(createdat|updatedat|deletedat|modifiedat|__v|_id)$/;
-function deepPick(o, names, depth){
-  depth = depth || 0;
-  if (!o || typeof o !== 'object' || Array.isArray(o) || depth > 4) return undefined;
-  const k = pick(o, names);
-  if (k !== null && !SKIP_DEEP.test(low(k))){
-    const v = o[k];
-    /* имя совпало, но внутри ещё объект — например address: { fullAddress, point }.
-       Возвращать надо то, что можно показать, а не контейнер. */
-    if (v && typeof v === 'object' && !Array.isArray(v)){
-      const inner = deepPick(v, names, depth+1);
-      if (inner !== undefined && inner !== null && inner !== '') return inner;
-      const t = textOf(v);
-      if (t !== null) return t;
-    } else if (v !== null && v !== undefined && v !== ''){
-      return v;
-    }
-    /* поле нашлось, но пустое — ищем дальше, а не сдаёмся */
-  }
-  for (const key of Object.keys(o)){
-    if (SKIP_DEEP.test(low(key))) continue;
-    const r = deepPick(o[key], names, depth+1);
-    if (r !== undefined && r !== null && r !== '') return r;
-  }
-  return undefined;
-}
-const pickBest = (o, strong, weak) => {
-  const a = deepPick(o, strong);
-  return a !== undefined && a !== null && a !== '' ? a : deepPick(o, weak);
-};
-function deepLatLon(o, swap, depth){
-  depth = depth || 0;
-  if (!o || typeof o !== 'object' || depth > 4) return null;
-  const here = readLatLon(o, swap);
-  if (here) return here;
-  for (const k of Object.keys(o)){
-    if (SKIP_DEEP.test(low(k))) continue;
-    const v = o[k];
-    if (v && typeof v === 'object'){
-      const r = deepLatLon(v, swap, depth+1);
-      if (r) return r;
-    }
-  }
-  return null;
-}
+const $ = id => document.getElementById(id);
+function say(id, text, kind){ const e = $(id); e.textContent = text || ''; e.className = 'msg' + (text ? ' ' + (kind || 'err') : ''); }
+function conn(state, text){ $('led').dataset.s = state; $('conn').textContent = text; }
 
-/* плоский список «путь → значение» для первой остановки: когда автопоиск
-   промахнулся, это единственный способ увидеть, как устроен чужой ответ */
-function flatPaths(o, prefix, out, depth){
-  out = out || []; depth = depth || 0; prefix = prefix || '';
-  if (!o || typeof o !== 'object' || depth > 4 || out.length > 60) return out;
-  for (const k of Object.keys(o)){
-    if (out.length > 60) break;
-    const v = o[k], path = prefix ? prefix + '.' + k : k;
-    if (v && typeof v === 'object' && !Array.isArray(v)) flatPaths(v, path, out, depth+1);
-    else if (Array.isArray(v)) out.push([path + '[]', v.length <= 4 ? JSON.stringify(v) : v.length + ' элем.']);
-    else out.push([path, JSON.stringify(v)]);
-  }
-  return out;
+const n = v => { if (v === null || v === undefined || v === '') return null; const x = Number(v); return Number.isFinite(x) ? x : null; };
+const nf1 = new Intl.NumberFormat('ru-RU', { minimumFractionDigits:1, maximumFractionDigits:1 });
+const nf0 = new Intl.NumberFormat('ru-RU', { maximumFractionDigits:0 });
+const km  = v => v === null || v === undefined || !isFinite(v) ? '—' : nf1.format(v);
+const int = v => v === null || v === undefined || !isFinite(v) ? '—' : nf0.format(v);
+const pct = v => v === null || v === undefined || !isFinite(v) ? '—' : nf0.format(v * 100) + '%';
+const sum = (rows, f) => rows.reduce((s, r) => s + (n(f(r)) || 0), 0);
+const byText = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'ru');
+function median(vals){
+  const a = vals.filter(v => v !== null && isFinite(v)).sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m-1] + a[m]) / 2;
+}
+const cityName = c => CITY_NAMES[c] || c || '—';
+
+const fmtTime = new Intl.DateTimeFormat('ru-RU', { timeZone:TZ, hour:'2-digit', minute:'2-digit' });
+const fmtDay  = new Intl.DateTimeFormat('ru-RU', { timeZone:TZ, day:'2-digit', month:'2-digit' });
+const fmtDT   = new Intl.DateTimeFormat('ru-RU', { timeZone:TZ, day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+const fmtISO  = new Intl.DateTimeFormat('en-CA', { timeZone:TZ, year:'numeric', month:'2-digit', day:'2-digit' });
+const validDate = d => d instanceof Date && !isNaN(d);
+const localDate = d => fmtISO.format(d);   // ГГГГ-ММ-ДД по Ташкенту
+/* время по Ташкенту; дата добавляется, если момент не в день маршрута */
+function tm(iso, routeDate){
+  const d = iso ? new Date(iso) : null;
+  if (!validDate(d)) return '—';
+  return localDate(d) === routeDate ? fmtTime.format(d) : fmtDay.format(d) + ' ' + fmtTime.format(d);
+}
+const dt = iso => { const d = iso ? new Date(iso) : null; return validDate(d) ? fmtDT.format(d) : '—'; };
+const ruDate = iso => iso ? iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.' + iso.slice(0, 4) : '—';
+const minutesBetween = (a, b) => (a && b) ? (Date.parse(b) - Date.parse(a)) / 60000 : null;
+/* «21:00» и «21:00:00» — оба допустимы в settings; берём часы и минуты */
+function localMoment(date, hhmm){
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || ''));
+  if (!m) return null;
+  const d = new Date(`${date}T${m[1].padStart(2, '0')}:${m[2]}:00${TZ_OFFSET}`);
+  return validDate(d) ? d : null;
+}
+function haversineKm(a, b){
+  const rad = d => d * Math.PI / 180, R = 6371;
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const x = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(x));
 }
 
-/* все массивы объектов в ответе, отсортированные по похожести на список остановок */
-function findStopArrays(root){
-  const out = [];
-  const seen = new Set();
-  (function walk(node, path, depth){
-    if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
-    seen.add(node);
-    if (Array.isArray(node)){
-      const objs = node.filter(x => x && typeof x === 'object' && !Array.isArray(x));
-      if (objs.length >= 2 && objs.length === node.length) out.push({ path, arr: node, score: scoreStops(node, path) });
-      node.slice(0, 50).forEach((v,i) => walk(v, path.concat(i), depth+1));
-      return;
-    }
-    for (const k of Object.keys(node)) walk(node[k], path.concat(k), depth+1);
-  })(root, [], 0);
-  return out.filter(c => c.score > 0).sort((a,b) => b.score - a.score || a.path.length - b.path.length).slice(0, 6);
-}
-
-function scoreStops(arr, path){
-  const sample = arr.slice(0, 20).filter(x => x && typeof x === 'object');
-  if (!sample.length) return 0;
-  const share = names => sample.filter(o => deepPick(o, names) !== undefined).length / sample.length;
-  const geo = sample.filter(o => deepLatLon(o) !== null).length / sample.length;
-  let s = 0;
-  s += 4 * geo;
-  s += 2 * share(ADDR_KEYS);
-  s += 2 * share(TIME_KEYS);
-  s += 1 * share(ID_KEYS);
-  /* решающее: массив маршрута несёт плановое время приезда по каждой точке,
-     а справочник заказов — только окно доставки на день */
-  s += 4 * share(TIME_STRONG);
-  s += 2 * share(REPORT_KEYS);
-  if (sample.some(isTerminal)) s += 2;            // старт и финиш бывают только в маршруте
-  if (/stop|waypoint|task|order|job|visit|activity|point|остановк|заказ/.test(low(path.join('.')))) s += 2;
-  if (arr.length > 500) s -= 3;                 // это уже геометрия маршрута, а не остановки
-  if (!geo && !share(ADDR_KEYS)) s -= 2;
-  return s;
-}
-
-/* координаты из объекта: пара полей, либо массив [долгота, широта] как в GeoJSON */
-function readLatLon(o, swap){
-  const kLat = pick(o, LAT_KEYS), kLon = pick(o, LON_KEYS);
-  if (kLat && kLon && isFinite(+o[kLat]) && isFinite(+o[kLon])) return norm(+o[kLat], +o[kLon], swap);
-  const kGeo = pick(o, GEO_KEYS);
-  if (kGeo){
-    const v = o[kGeo];
-    if (Array.isArray(v) && v.length >= 2 && isFinite(+v[0]) && isFinite(+v[1])) return norm(+v[1], +v[0], swap);
-    if (v && typeof v === 'object'){
-      const a = pick(v, LAT_KEYS), b = pick(v, LON_KEYS);
-      if (a && b && isFinite(+v[a]) && isFinite(+v[b])) return norm(+v[a], +v[b], swap);
-    }
-  }
-  return null;
-  function norm(lat, lon, sw){
-    if (sw) { const t = lat; lat = lon; lon = t; }
-    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
-    if (!lat && !lon) return null;
-    return { lat, lon };
-  }
-}
-
-/* время: ISO с зоной и без, epoch в секундах и миллисекундах */
-function readTime(v, routeDate){
-  if (v == null || v === '') return null;
-  if (typeof v === 'object') return readTime(v.value ?? v.time ?? v.from ?? v.start, routeDate);
-  if (typeof v === 'number' || /^\d{10,13}$/.test(String(v))){
-    const n = Number(v);
-    const ms = String(Math.trunc(n)).length <= 10 ? n*1000 : n;
-    return isFinite(ms) ? new Date(ms).toISOString() : null;
-  }
-  const s = String(v).trim();
-  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s) && routeDate){
-    /* «14:30» — местное время дня маршрута, переводим в UTC по тому же смещению */
-    const [h,m,sec] = s.split(':').map(Number);
-    const ms = Date.parse(routeDate + 'T00:00:00Z') + ((h - tz())*3600 + m*60 + (sec||0))*1000;
-    return isFinite(ms) ? new Date(ms).toISOString() : null;
-  }
-  const ms = Date.parse(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z');
-  return isFinite(ms) ? new Date(ms).toISOString() : null;
-}
-
-function textOf(v){
-  if (v == null) return null;
-  if (typeof v === 'string') return v.trim().slice(0, 500) || null;
-  if (typeof v === 'number') return String(v);
-  if (typeof v === 'object' && !Array.isArray(v)){
-    const k = pick(v, ADDR_STRONG.concat(
-      ['text','value','name','title','full','line','formatted','formattedaddress','displayname','label']));
-    if (k !== null && typeof v[k] === 'string' && v[k].trim()) return v[k].trim().slice(0, 500);
-    /* внутри ровно одна строка — она и есть то, что хотели показать */
-    const strs = Object.keys(v).filter(x => typeof v[x] === 'string' && v[x].trim());
-    if (strs.length === 1) return v[strs[0]].trim().slice(0, 500);
-  }
-  return null;
-}
-
-/* ---- шапка маршрута: километраж и геометрия планового пути ---- */
-/* Плановый маршрут приходит закодированной строкой (тот же формат, что у Google).
-   Расшифровав её, план можно нарисовать по дорогам, а не прямыми между точками. */
-function decodePolyline(str, precision){
-  const factor = Math.pow(10, precision || 5);
-  const out = [];
-  let index = 0, lat = 0, lon = 0;
-  while (index < str.length){
-    let b, shift = 0, result = 0;
-    do {
-      b = str.charCodeAt(index++) - 63;
-      if (isNaN(b) || b < 0) return out;
-      result |= (b & 0x1f) << shift; shift += 5;
-    } while (b >= 0x20 && index <= str.length);
-    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
-    shift = 0; result = 0;
-    do {
-      b = str.charCodeAt(index++) - 63;
-      if (isNaN(b) || b < 0) return out;
-      result |= (b & 0x1f) << shift; shift += 5;
-    } while (b >= 0x20 && index <= str.length);
-    lon += (result & 1) ? ~(result >> 1) : (result >> 1);
-    const la = lat/factor, lo = lon/factor;
-    if (Math.abs(la) > 90 || Math.abs(lo) > 180) return out;
-    out.push([la, lo]);
-    if (out.length > 50000) return out;
-  }
-  return out;
-}
-
-/* точность кодирования бывает 5 и 6 знаков — выбираем ту, что легла ближе к остановкам */
-function bestPolyline(str, stops){
-  const ref = stops.filter(s => s.lat !== null).slice(0, 30);
-  let best = null;
-  for (const p of [5, 6]){
-    const line = decodePolyline(str, p);
-    if (line.length < 2) continue;
-    let score = 0;
-    if (ref.length){
-      const ds = ref.map(s => Math.min.apply(null,
-        line.filter((_,i) => i % Math.max(1, Math.ceil(line.length/500)) === 0)
-            .map(([la,lo]) => haversine(s, { lat: la, lon: lo }))));
-      ds.sort((a,b) => a-b);
-      score = ds[Math.floor(ds.length/2)];
-    }
-    if (!best || score < best.score) best = { line, precision: p, score };
-  }
-  return best && (!ref.length || best.score < 2000) ? best : null;
-}
-
-function planExtras(root, stops){
-  const out = { km: null, polyline: null, line: null };
-  const d = deepPick(root, DIST_KEYS);
-  const n = d === undefined ? NaN : Number(d);
-  /* в ответе метры, а нам нужны километры; маленькое число — уже километры */
-  if (isFinite(n) && n > 0) out.km = n > 1000 ? +(n/1000).toFixed(2) : +n.toFixed(2);
-  const p = deepPick(root, POLY_KEYS);
-  if (typeof p === 'string' && p.length > 10){
-    const best = bestPolyline(p, stops);
-    if (best){ out.polyline = p; out.line = best.line; }
-  }
-  return out;
-}
-
-/* канонические остановки — единственное место стыка с чужой структурой */
-const isTerminal = o => {
-  const k = pick(o, KIND_KEYS);
-  return k !== null && TERMINAL_RE.test(low(o[k]));
-};
-
-function buildStops(arr, routeDate, swap){
-  /* склад и финиш выкидываем до нумерации: у маршрутизатора клиентские точки
-     считаются с единицы, и номера должны совпадать с тем, что видит логист */
-  const items = arr.filter(o => o && typeof o === 'object' && !isTerminal(o));
-  return items.map((o,i) => {
-    const ll = deepLatLon(o, swap);
-    const vIn   = pickBest(o, TIME_STRONG, TIME_WEAK);
-    const vOut  = deepPick(o, OUT_KEYS);
-    const vAddr = pickBest(o, ADDR_STRONG, ADDR_WEAK);
-    const vId   = pickBest(o, ID_STRONG, ID_WEAK);
-    const vName = deepPick(o, NAME_KEYS);
-    const vServ = deepPick(o, SERV_KEYS);
-    const vStat = deepPick(o, STAT_KEYS);
-    const serv = vServ === undefined ? NaN : Number(vServ);
-    const rawIn = vIn === undefined ? null : JSON.stringify(vIn);
-    return {
-      seq: i+1,
-      lat: ll ? ll.lat : null,
-      lon: ll ? ll.lon : null,
-      address: textOf(vAddr),
-      label: textOf(vName),
-      externalId: textOf(vId),
-      plannedArrival: vIn === undefined ? null : readTime(vIn, routeDate),
-      plannedDeparture: vOut === undefined ? null : readTime(vOut, routeDate),
-      reportedArrival: (() => { const v = deepPick(o, REPORT_KEYS); return v === undefined ? null : readTime(v, routeDate); })(),
-      serviceSeconds: isFinite(serv) ? Math.round(serv > 86400 ? serv/1000 : serv) : null,
-      status: textOf(vStat),
-      rawTime: rawIn ? rawIn.slice(0, 60) : null,
-      /* «14:30» без зоны — привязано к текущей настройке UTC+, об этом надо предупредить */
-      bareTime: rawIn ? /^\s*"?\d{1,2}:\d{2}(:\d{2})?"?\s*$/.test(rawIn) : false
-    };
-  }).filter(Boolean);
-}
-
-/* ============ чтение из базы ============ */
-async function fetchIndex(){
-  const rows = await api('driver_tracks?select=id,driver,plate,region,track_date,point_count&order=track_date.desc,driver.asc');
-  index = rows.map((r,i) => ({
-    id: r.id, driver: r.driver, plate: r.plate || '', region: r.region || '',
-    date: r.track_date, count: r.point_count, color: COLORS[i % COLORS.length]
-  }));
-}
-async function fetchPlans(){
-  const rows = await api('route_plans?select=id,track_id,driver,plate,region,route_date,external_route_id,planned_distance_km,planned_polyline,stop_count&order=route_date.desc,driver.asc');
-  plans = rows.map(r => ({
-    id: r.id, trackId: r.track_id, driver: r.driver, plate: r.plate || '', region: r.region || '',
-    date: r.route_date, ext: r.external_route_id || '',
-    km: r.planned_distance_km === null ? null : Number(r.planned_distance_km),
-    polyline: r.planned_polyline || null,
-    stops: r.stop_count || 0
-  }));
-}
-async function points(id){
-  if (cache[id]) return cache[id];
-  const rows = await api('track_points?track_id=eq.' + pgid(id) + '&select=seq,recorded_at,lat,lon,bearing_degrees&order=seq.asc&limit=50000');
-  cache[id] = rows.map(r => ({
-    t: new Date(r.recorded_at).toISOString(), lat: +r.lat, lon: +r.lon,
-    bearing: r.bearing_degrees === null ? NaN : +r.bearing_degrees
-  }));
-  return cache[id];
-}
-const plansOf = trackId => plans.filter(p => p.trackId === trackId);
-
-async function stopsOf(planId){
-  if (stopsCache[planId]) return stopsCache[planId];
-  const rows = await api('plan_stops?plan_id=eq.' + pgid(planId) +
-    '&select=seq,label,external_id,address,lat,lon,planned_arrival,planned_departure,reported_arrival,service_seconds,status&order=seq.asc&limit=5000');
-  stopsCache[planId] = rows.map(r => ({
-    seq: r.seq, label: r.label, externalId: r.external_id, address: r.address,
-    lat: r.lat === null ? null : +r.lat, lon: r.lon === null ? null : +r.lon,
-    plannedArrival: r.planned_arrival ? new Date(r.planned_arrival).toISOString() : null,
-    plannedDeparture: r.planned_departure ? new Date(r.planned_departure).toISOString() : null,
-    reportedArrival: r.reported_arrival ? new Date(r.reported_arrival).toISOString() : null,
-    serviceSeconds: r.service_seconds, status: r.status
-  }));
-  return stopsCache[planId];
-}
-
-/* ============ запись в базу ============ */
-async function addTrack(raw){
-  const driver = document.getElementById('in-driver').value.trim();
-  if (!driver){ say('msg','Впишите водителя — иначе трек не отличить от остальных.','err'); return; }
-  let pts;
-  try { pts = parseTrack(raw); } catch(e){ say('msg', e.message, 'err'); return; }
-
-  const plate = document.getElementById('in-plate').value.trim();
-  const region = normRegion(document.getElementById('in-region').value);
-  const date = dateKey(pts[0].t);
-  const dup = index.find(x => x.driver === driver && x.date === date);
-  if (dup && !confirm(`Трек «${driver}» за ${dateHuman(date)} уже есть в базе. Загрузить ещё один?`)) return;
-
-  const btn = document.getElementById('btn-add');
-  btn.disabled = true; btn.textContent = 'Загрузка…';
-  try {
-    /* шаг 1 — запись. Только её откатываем: дальше трек уже в базе, и сбой связки
-       или обновления списка не повод уничтожать только что залитые точки. */
-    let created = null;
-    try {
-      const ins = await api('driver_tracks', {
-        method: 'POST',
-        headers: { 'Prefer': 'return=representation' },
-        body: JSON.stringify([{ driver, plate: plate || null, region, track_date: date, point_count: pts.length }])
-      });
-      created = ins[0];
-
-      const payload = pts.map((p,i) => ({
-        track_id: created.id, seq: i+1, recorded_at: p.t,
-        lat: p.lat, lon: p.lon, bearing_degrees: isFinite(p.bearing) ? Math.round(p.bearing) : null
-      }));
-      for (let i = 0; i < payload.length; i += BATCH){
-        await api('track_points', { method:'POST', body: JSON.stringify(payload.slice(i, i+BATCH)) });
-      }
-    } catch(e){
-      let tail = '';
-      if (created){
-        try { await api('driver_tracks?id=eq.' + pgid(created.id), { method:'DELETE' }); }
-        catch(_){
-          /* откат не прошёл (например, сессия слетела посреди заливки) — молчать нельзя:
-             в базе останется шапка с point_count, которому не соответствуют точки */
-          tail = ` Откат не удался: в базе осталась шапка трека с неполными точками, id ${created.id}. Удалите её вручную.`;
-        }
-      }
-      say('msg', 'Не записалось. ' + e.message + tail, 'err');
-      return;
-    }
-
-    /* шаг 2 — то, что уже не влияет на сохранность данных */
-    cache[created.id] = pts;
-    selected.add(created.id);
-    document.getElementById('in-json').value = '';
-
-    let tail = '';
-    try {
-      const linked = await linkOrphanPlans(driver, date, created.id);
-      if (linked) tail = ' · подхвачен ' + nPlans(linked);
-    } catch(e){ tail = ' · план подхватить не удалось, свяжите вручную'; }
-
-    try { await refresh(true); }
-    catch(e){ say('msg', 'Трек сохранён, но список не перечитался. ' + e.message, 'err'); return; }
-    say('msg', `Загружено ${nPoints(pts.length)} · ${dateHuman(date)}` + tail, 'ok');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Добавить трек';
-  }
-}
-
-/* перечитать всё из базы и перерисовать — вынесено, чтобы отличать сбой записи от сбоя обновления */
-async function refresh(fit){
-  await fetchIndex(); await fetchPlans();
-  renderList(); await renderAll(!!fit);
-}
-
-/* план мог быть загружен раньше трека — связываем в обе стороны, чтобы порядок импорта ничего не решал */
-async function linkOrphanPlans(driver, date, trackId){
-  const q = 'route_plans?driver=eq.' + pgq(driver) + '&route_date=eq.' + date + '&track_id=is.null&select=id';
-  const rows = await api(q);
-  if (!rows.length) return 0;
-  await api('route_plans?driver=eq.' + pgq(driver) + '&route_date=eq.' + date + '&track_id=is.null',
-    { method:'PATCH', body: JSON.stringify({ track_id: trackId }) });
-  return rows.length;
-}
-
-function planHeader(){
-  const driver = document.getElementById('p-driver').value.trim();
-  const date   = document.getElementById('p-date').value;
-  if (!driver){ say('msg-plan','Впишите водителя — по нему план связывается с треком.','err'); return null; }
-  if (!date){ say('msg-plan','Укажите дату маршрута.','err'); return null; }
-  const kmVal = numOrNull(document.getElementById('p-km').value);
-  if (Number.isNaN(kmVal)){ say('msg-plan','Плановый пробег — число, например 34.15.','err'); return null; }
-  if (kmVal !== null && (kmVal < 0 || kmVal > 5000)){ say('msg-plan','Плановый пробег вне разумного: ожидаются километры, не метры.','err'); return null; }
-  return {
-    driver, date, km: kmVal,
-    plate: document.getElementById('p-plate').value.trim() || null,
-    region: normRegion(document.getElementById('p-region').value),
-    ext: document.getElementById('p-ext').value.trim() || null
+/* ============ таблицы ============ */
+/* col: { t: заголовок, v: row → значение (для CSV тоже), f: формат, num, mono, bad, weak, title } */
+function table(cols, rows, opts){
+  opts = opts || {};
+  if (!rows.length && !opts.total) return h('div', { class:'empty' }, opts.empty || 'Нет данных за выбранный период.');
+  const cell = (c, r) => {
+    const v = c.v(r);
+    const shown = c.f ? c.f(v, r) : (v === null || v === undefined || v === '' ? '—' : v);
+    const cls = [c.num ? 'num' : '', c.mono ? 'mono' : '', c.bad && c.bad(r) ? 'bad' : '', c.weak && c.weak(r) ? 'weak' : ''].filter(Boolean).join(' ');
+    return h('td', { class:cls || null, title:c.title ? c.title(r) : null }, shown);
   };
-}
-
-/* без JSON — только шапка; с JSON — сначала предпросмотр, запись по кнопке в нём */
-async function addPlan(){
-  const head = planHeader();
-  if (!head) return;
-  const raw = document.getElementById('p-json').value.trim();
-  if (raw) return preparePlan(raw, head);
-
-  const dup = plans.find(p => p.driver === head.driver && p.date === head.date);
-  if (dup && !confirm(`План «${head.driver}» за ${dateHuman(head.date)} уже есть. Плановый километраж в сводке сложится. Добавить ещё один?`)) return;
-  await savePlan(head, [], null);
-}
-
-/* Исходный ответ лежит в route_plans.raw, поэтому после доработки парсера план
-   можно пересобрать одной кнопкой — не выгружая 59 кБ из DevTools заново. */
-async function rebuildFromRaw(planId){
-  const p = plans.find(x => x.id === planId);
-  if (!p) return;
-  document.getElementById('planbox').open = true;
-  say('msg-plan', 'Читаю сохранённый JSON…', 'ok');
-  let rows;
-  try { rows = await api('route_plans?id=eq.' + pgid(planId) + '&select=raw'); }
-  catch(e){ say('msg-plan', 'Не прочитался сохранённый JSON. ' + e.message, 'err'); return; }
-  const data = rows && rows[0] && rows[0].raw;
-  if (!data){
-    say('msg-plan', 'У этого плана нет сохранённого исходника: он заведён руками или JSON был слишком большой. Загрузите ответ маршрутизатора заново.', 'err');
-    return;
-  }
-  const head = { driver: p.driver, date: p.date, km: p.km, plate: p.plate || null,
-                 region: p.region || null, ext: p.ext || null };
-  const candidates = findStopArrays(data);
-  if (!candidates.length){ say('msg-plan', 'В сохранённом JSON не нашлось массива остановок.', 'err'); return; }
-  draft = { data, raw: '', head, candidates, ci: 0, swap: false, replaceId: planId };
-  rebuildDraft();
-  say('msg-plan', 'Проверьте, что распознано, и нажмите «Записать план и остановки».', 'ok');
-}
-
-function preparePlan(raw, head){
-  if (raw.length > MAX_JSON_BYTES){ say('msg-plan','Файл слишком большой, похоже, скопировано что-то другое.','err'); return; }
-  let data;
-  try { data = JSON.parse(raw); }
-  catch(e){ say('msg-plan','Это не JSON. Скопируйте ответ запроса целиком, вместе с внешними фигурными скобками.','err'); return; }
-
-  const candidates = findStopArrays(data);
-  if (!candidates.length){
-    say('msg-plan','В этом JSON не нашлось ничего похожего на список остановок: нужен массив объектов с координатами, адресом или временем. Проверьте, тот ли запрос скопирован.','err');
-    return;
-  }
-  draft = { data, raw, head, candidates, ci: 0, swap: false };
-  rebuildDraft();
-}
-
-function rebuildDraft(){
-  const c = draft.candidates[draft.ci];
-  draft.cut = Math.max(0, c.arr.length - MAX_STOPS);
-  draft.stops = buildStops(c.arr.slice(0, MAX_STOPS), draft.head.date, draft.swap);
-  draft.track = index.find(t => t.driver === draft.head.driver && t.date === draft.head.date) || null;
-  draft.extras = planExtras(draft.data, draft.stops);
-  draft.sanity = null; draft.sanityError = '';
-  renderPreview();
-  if (draft.track) checkAgainstTrack();       // асинхронно дорисует санитарную проверку
-}
-
-/* насколько плановые точки вообще ложатся на трек: главная защита от перепутанных координат */
-async function checkAgainstTrack(){
-  const want = draft.track.id;
-  let pts;
-  try { pts = await points(want); }
-  catch(e){
-    if (draft){ draft.sanityError = 'Трек для сверки не прочитался (' + e.message + '), поэтому проверить координаты не с чем.'; renderPreview(); }
-    return;
-  }
-  if (!draft || !draft.track || draft.track.id !== want) return;
-
-  /* это санитарная проверка порядка координат, а не измерение: точности
-     выборки хватает, а полный перебор на больших треках вешает вкладку */
-  const step = Math.max(1, Math.ceil(pts.length / 1500));
-  const sample = pts.filter((_,i) => i % step === 0);
-  const ds = draft.stops.filter(s => s.lat !== null).slice(0, 300)
-    .map(s => Math.min.apply(null, sample.map(p => haversine(s, p))));
-  if (!ds.length) return;
-  ds.sort((a,b) => a-b);
-  draft.sanity = { median: ds[Math.floor(ds.length/2)], n: ds.length };
-  renderPreview();
-}
-
-function renderPreview(){
-  const box = document.getElementById('preview');
-  if (!draft){ box.hidden = true; box.innerHTML = ''; return; }
-  const st = draft.stops;
-  const withGeo  = st.filter(s => s.lat !== null).length;
-  const withTime = st.filter(s => s.plannedArrival).length;
-  const withAddr = st.filter(s => s.address || s.label).length;
-
-  const warn = [];
-  if (!st.length) warn.push('Остановок не распознано.');
-  if (!withGeo) warn.push('Ни у одной остановки нет координат — точки на карте и сверка по ним не получатся, останется только шапка.');
-  if (!withTime) warn.push('Планового времени нет — отклонения посчитать будет не из чего.');
-  if (draft.cut) warn.push(`В массиве ${st.length + draft.cut} элементов, записаны будут первые ${st.length}. Столько остановок в маршруте не бывает — похоже, выбран не тот массив.`);
-  if (draft.sanityError) warn.push(draft.sanityError);
-  if (draft.sanity && draft.sanity.median > 3000)
-    warn.push(`Плановые точки в среднем в ${(draft.sanity.median/1000).toFixed(1)} км от трека. Скорее всего, перепутаны широта и долгота — поставьте галку ниже.`);
-  if (st.some(s => s.bareTime))
-    warn.push(`Время в плане без часового пояса — считаем его местным по текущей настройке UTC+${tz()}. Если потом поменять смещение в шапке, у этого плана оно уже не пересчитается.`);
-
-  /* одно и то же время у всех остановок — это окно обслуживания на день,
-     а не плановый приезд. Молча считать по нему отклонения нельзя. */
-  const times = st.map(s => s.plannedArrival).filter(Boolean);
-  const same = times.length > 2 && new Set(times).size === 1;
-  if (same) warn.push(`Плановое время у всех ${times.length} остановок одинаковое (${hhmm(times[0])}). Это похоже на окно доставки на весь день, а не на время приезда по точкам: отклонения по нему считать бессмысленно. Посмотрите список полей ниже — возможно, настоящее время приезда лежит в другом поле.`);
-
-  const rows = st.slice(0, 3).map(s => `<tr>
-      <td class="num r">${s.seq}</td>
-      <td class="who">${esc(s.address || s.label || '—')}</td>
-      <td class="num">${s.plannedArrival ? hhmm(s.plannedArrival) : '—'}</td>
-      <td class="num">${s.lat === null ? '—' : s.lat.toFixed(5) + ', ' + s.lon.toFixed(5)}</td>
-    </tr>`).join('');
-
-  box.hidden = false;
-  box.innerHTML = `
-    <div class="prev">
-      <b>Распознано остановок: ${st.length}</b>
-      <div class="prevline">с координатами ${withGeo} · со временем ${withTime} · с адресом ${withAddr}</div>
-      ${draft.extras && draft.extras.km !== null
-        ? `<div class="prevline">плановый пробег из ответа: <b>${draft.extras.km} км</b>${
-             draft.head.km === null ? ' — будет записан' : ' (в поле вписано ' + draft.head.km + ', возьмём его)'}</div>` : ''}
-      ${draft.extras && draft.extras.line
-        ? `<div class="prevline">плановый маршрут по дорогам: ${draft.extras.line.length} точек геометрии — план ляжет по улицам, а не прямыми</div>` : ''}
-      ${draft.sanity ? `<div class="prevline">медиана расстояния до трека: ${draft.sanity.median < 1000
-          ? Math.round(draft.sanity.median) + ' м' : (draft.sanity.median/1000).toFixed(1) + ' км'}</div>` : ''}
-      ${st[0] && st[0].rawTime ? `<div class="prevline">время в исходнике: <code>${esc(st[0].rawTime)}</code> → ${st[0].plannedArrival ? hhmm(st[0].plannedArrival) : 'не разобрано'}</div>` : ''}
-      ${warn.map(w => `<div class="prevwarn">${esc(w)}</div>`).join('')}
-      <label class="f"><span>Где лежат остановки</span>
-        <select id="pv-pick">${draft.candidates.map((c,i) =>
-          `<option value="${i}"${i === draft.ci ? ' selected' : ''}>${esc(c.path.join('.') || 'корень')} · ${c.arr.length} шт.</option>`).join('')}</select>
-      </label>
-      <label class="chk"><input type="checkbox" id="pv-swap"${draft.swap ? ' checked' : ''}> поменять широту и долготу</label>
-      <table class="prevtab"><thead><tr><th>№</th><th>Адрес</th><th>План</th><th>Координаты</th></tr></thead><tbody>${rows}</tbody></table>
-      <details class="fields"${withGeo && withTime ? '' : ' open'}>
-        <summary>Какие поля есть в первой остановке</summary>
-        <div class="fieldlist">${
-          flatPaths(draft.candidates[draft.ci].arr[0]).map(([p,v]) =>
-            `<div><code>${esc(p)}</code> <span>${esc(String(v).slice(0,70))}</span></div>`).join('')
-          || '<div>в первом элементе нет полей</div>'
-        }</div>
-      </details>
-      <div class="btnrow">
-        <button class="primary" id="pv-save"${withGeo || st.length ? '' : ' disabled'}>Записать план и остановки</button>
-        <button id="pv-cancel">Отмена</button>
-      </div>
-    </div>`;
-
-  document.getElementById('pv-pick').addEventListener('change', e => { draft.ci = +e.target.value; rebuildDraft(); });
-  document.getElementById('pv-swap').addEventListener('change', e => { draft.swap = e.target.checked; rebuildDraft(); });
-  document.getElementById('pv-cancel').addEventListener('click', () => { draft = null; renderPreview(); });
-  document.getElementById('pv-save').addEventListener('click', async () => {
-    const d = draft;
-    if (!d) return;
-    const dup = d.replaceId ? plans.find(p => p.id === d.replaceId)
-                            : plans.find(p => p.driver === d.head.driver && p.date === d.head.date);
-    if (dup && !d.replaceId && !confirm(`План «${d.head.driver}» за ${dateHuman(d.head.date)} уже есть. Заменить его вместе с остановками?`)) return;
-    draft = null; renderPreview();
-    /* старый план удаляется только после того, как новый лёг в базу: иначе обрыв
-       между двумя запросами оставил бы день вообще без плана */
-    await savePlan(d.head, d.stops, d.data, dup ? dup.id : null, d.extras);
-  });
-}
-
-async function savePlan(head, stops, rawJson, replaceId, extras){
-  const btn = document.getElementById('btn-addplan');
-  btn.disabled = true; btn.textContent = 'Запись…';
-  try {
-    const track = index.filter(t => t.driver === head.driver && t.date === head.date);
-    const firstT = stops.map(s => s.plannedArrival).filter(Boolean).sort()[0] || null;
-    const lastT  = stops.map(s => s.plannedDeparture || s.plannedArrival).filter(Boolean).sort().pop() || null;
-
-    /* исходник кладём в raw целиком, но не любой ценой: гигантский ответ раздувает таблицу */
-    let rawToStore = rawJson, rawNote = '';
-    if (rawJson){
-      const asText = JSON.stringify(rawJson);
-      if (asText.length > MAX_RAW_BYTES){ rawToStore = null; rawNote = ' · исходный JSON не сохранён, слишком большой'; }
+  const body = rows.map(r => {
+    const sel = opts.selected ? opts.selected(r) : false;
+    const attrs = { class:[opts.onClick ? 'click' : '', sel ? 'sel' : ''].filter(Boolean).join(' ') || null };
+    if (opts.onClick){
+      attrs.tabindex = '0';
+      attrs['aria-current'] = sel ? 'true' : null;
+      attrs.onclick = () => opts.onClick(r);
+      attrs.onkeydown = e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); opts.onClick(r); } };
     }
-
-    let created = null;
-    try {
-      const ins = await api('route_plans', {
-        method:'POST', headers: { 'Prefer': 'return=representation' },
-        body: JSON.stringify([{
-          driver: head.driver, plate: head.plate, region: head.region,
-          route_date: head.date, external_route_id: head.ext,
-          /* вписанное руками главнее: человек мог знать, что в ответе не то число */
-          planned_distance_km: head.km !== null ? head.km : (extras ? extras.km : null),
-          planned_polyline: extras ? extras.polyline : null,
-          planned_start: firstT, planned_end: lastT,
-          track_id: track.length === 1 ? track[0].id : null,
-          stop_count: stops.length,
-          raw: rawToStore
-        }])
-      });
-      created = ins[0];
-
-      if (stops.length){
-        const payload = stops.map(s => ({
-          plan_id: created.id, seq: s.seq, label: s.label, external_id: s.externalId,
-          address: s.address, lat: s.lat, lon: s.lon,
-          planned_arrival: s.plannedArrival, planned_departure: s.plannedDeparture,
-          reported_arrival: s.reportedArrival,
-          service_seconds: s.serviceSeconds, status: s.status
-        }));
-        for (let i = 0; i < payload.length; i += BATCH)
-          await api('plan_stops', { method:'POST', body: JSON.stringify(payload.slice(i, i+BATCH)) });
-      }
-    } catch(e){
-      let tail = '';
-      if (created){
-        try { await api('route_plans?id=eq.' + pgid(created.id), { method:'DELETE' }); }
-        catch(_){ tail = ` Откат не удался: в базе осталась шапка плана без остановок, id ${created.id}. Удалите её вручную.`; }
-      }
-      say('msg-plan', 'Не записалось. ' + e.message + tail, 'err');
-      return;
-    }
-
-    /* новый план в базе — теперь можно убрать старый */
-    let replaceNote = '';
-    if (replaceId){
-      try { await api('route_plans?id=eq.' + pgid(replaceId), { method:'DELETE' }); delete stopsCache[replaceId]; }
-      catch(e){ replaceNote = ' · старый план удалить не удалось, за этот день их теперь два — лишний удалите вручную'; }
-    }
-
-    ['p-km','p-ext','p-json'].forEach(id => document.getElementById(id).value = '');
-    const tail = track.length === 1 ? ' · связан с треком'
-               : track.length  >  1 ? ' · треков за этот день несколько, свяжите вручную'
-               : ' · трека за этот день пока нет, свяжется при загрузке';
-    try { await refresh(false); }
-    catch(e){ say('msg-plan', 'План записан, но список не перечитался. ' + e.message, 'err'); return; }
-    say('msg-plan', `План записан${stops.length ? ', остановок ' + stops.length : ''}` + tail + rawNote + replaceNote,
-        replaceNote ? 'err' : 'ok');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Добавить план';
-  }
-}
-
-async function linkPlan(planId, trackId){
-  try { await api('route_plans?id=eq.' + pgid(planId), { method:'PATCH', body: JSON.stringify({ track_id: trackId || null }) }); }
-  catch(e){ say('msg-plan', 'Связка не сохранилась. ' + e.message, 'err'); return; }
-  try { await refresh(false); }
-  catch(e){ say('msg-plan', 'Связка сохранена, но список не перечитался. ' + e.message, 'err'); }
-}
-
-async function saveRegion(id, value){
-  const rec = index.find(x => x.id === id);
-  const next = normRegion(value);
-  editingRegion = null;
-  if (!rec || (rec.region || '') === (next || '')){ renderList(); return; }
-  try { await api('driver_tracks?id=eq.' + pgid(id), { method:'PATCH', body: JSON.stringify({ region: next }) }); }
-  catch(e){ say('msg', 'Регион не сохранился. ' + e.message, 'err'); renderList(); return; }
-  try { await refresh(false); }
-  catch(e){ say('msg', 'Регион сохранён, но список не перечитался. ' + e.message, 'err'); }
-}
-
-async function removeTrack(id){
-  const rec = index.find(x => x.id === id);
-  if (!rec) return;
-  const attached = plansOf(id).length;
-  const warn = attached ? `\n\nПланов привязано: ${attached}. Они останутся в базе, но станут несвязанными.` : '';
-  if (!confirm(`Удалить трек «${rec.driver}» за ${dateHuman(rec.date)} из базы?` + warn)) return;
-  try { await api('driver_tracks?id=eq.' + pgid(id), { method:'DELETE' }); }
-  catch(e){ say('msg', 'Не удалилось. ' + e.message, 'err'); return; }
-  selected.delete(id); delete cache[id];
-  try { await refresh(true); }
-  catch(e){ say('msg', 'Трек удалён, но список не перечитался. ' + e.message, 'err'); }
-}
-
-async function removePlan(id){
-  const p = plans.find(x => x.id === id);
-  if (!p || !confirm(`Удалить план «${p.driver}» за ${dateHuman(p.date)} из базы?`)) return;
-  try { await api('route_plans?id=eq.' + pgid(id), { method:'DELETE' }); }
-  catch(e){ say('msg-plan', 'Не удалилось. ' + e.message, 'err'); return; }
-  delete stopsCache[id];
-  try { await refresh(false); }
-  catch(e){ say('msg-plan', 'План удалён, но список не перечитался. ' + e.message, 'err'); }
-}
-
-/* ============ список слева ============ */
-function renderRegionOptions(){
-  document.getElementById('dl-regions').innerHTML =
-    knownRegions().map(r => `<option value="${esc(r)}"></option>`).join('');
-}
-
-function trackRowHtml(r){
-  const plansHere = plansOf(r.id);
-  const planKm = plansHere.reduce((s,p) => s + (p.km || 0), 0);
-  const regTag = editingRegion === r.id
-    ? `<input type="text" class="regin" list="dl-regions" data-regin="${r.id}" value="${esc(r.region)}" placeholder="регион">`
-    : `<button class="tag${r.region ? '' : ' none'}" data-reg="${r.id}" title="Изменить регион">${r.region ? esc(r.region) : 'регион?'}</button>`;
-  const planTag = plansHere.length
-    ? `<span class="tag plan">план ${planKm ? planKm.toFixed(2) + ' км' : 'без км'}${plansHere.length > 1 ? ' ×' + plansHere.length : ''}</span>`
-    : '';
-  return `
-    <div class="track" data-id="${r.id}" data-on="${selected.has(r.id)?1:0}" tabindex="0" role="button" aria-pressed="${selected.has(r.id)}">
-      <span class="dot" style="background:${r.color}"></span>
-      <span class="who">
-        <b>${esc(r.driver)}</b>
-        <span>${nPoints(r.count)}${r.plate ? ' · ' + esc(r.plate) : ''}</span>
-        <span class="tags">${regTag}${planTag}</span>
-      </span>
-      <button class="quiet" data-del="${r.id}" title="Удалить трек" aria-label="Удалить трек">✕</button>
-    </div>`;
-}
-
-function planRowHtml(p, tracksOfDay, nested){
-  const opts = ['<option value="">— не связан с треком —</option>']
-    .concat(tracksOfDay.map(t => `<option value="${t.id}"${t.id === p.trackId ? ' selected' : ''}>${esc(t.driver)} · ${nPoints(t.count)}</option>`))
-    .join('');
-  const bits = [p.km !== null ? p.km.toFixed(2) + ' км план' : 'километраж не указан'];
-  bits.push(p.stops ? plural(p.stops, ['остановка','остановки','остановок']) : 'без остановок');
-  if (p.ext) bits.push(esc(p.ext));
-  if (p.region) bits.push(esc(p.region));
-  return `
-    <div class="planrow${nested ? ' nested' : ''}">
-      <span class="dot plan" style="background:${PLAN_COLOR}"></span>
-      <span class="who">
-        <b>${nested ? 'План маршрута' : 'План · ' + esc(p.driver)}</b>
-        <span>${bits.join(' · ')}</span>
-        <select data-link="${p.id}" aria-label="Связать план с треком">${opts}</select>
-        <button class="tag" data-rebuild="${p.id}" title="Разобрать сохранённый JSON заново — например, после доработки парсера">пересобрать остановки</button>
-      </span>
-      <button class="quiet" data-delplan="${p.id}" title="Удалить план" aria-label="Удалить план">✕</button>
-    </div>`;
-}
-
-function renderList(){
-  renderRegionOptions();
-  const box = document.getElementById('list');
-  if (!index.length && !plans.length){
-    box.innerHTML = '<div class="empty"><b>В базе пока пусто</b>Вставьте JSON запроса history — трек запишется в Supabase и появится на карте.</div>';
-    return;
-  }
-  /* День сворачивается, внутри — регионы, план прижат к своему треку.
-     Плоским списком на три десятка строк ориентироваться невозможно. */
-  const days = {};
-  const day = d => (days[d] ||= { regions: {}, tracks: 0, plans: 0 });
-  const reg = (d, r) => (day(d).regions[r] ||= { tracks: [], orphans: [] });
-
-  index.forEach(t => { reg(t.date, t.region || NO_REGION).tracks.push(t); day(t.date).tracks++; });
-  plans.forEach(p => {
-    day(p.date).plans++;
-    const linked = p.trackId && index.some(t => t.id === p.trackId);
-    if (!linked) reg(p.date, p.region || NO_REGION).orphans.push(p);
+    return h('tr', attrs, cols.map(c => cell(c, r)));
   });
-
-  const dates = Object.keys(days).sort().reverse();
-  box.innerHTML = dates.map((date, di) => {
-    const d = days[date];
-    const ofDay = index.filter(t => t.date === date);
-    const names = Object.keys(d.regions).sort((a,b) =>
-      a === NO_REGION ? 1 : b === NO_REGION ? -1 : a.localeCompare(b,'ru'));
-
-    const body = names.map(name => {
-      const g = d.regions[name];
-      const rows = g.tracks.map(t =>
-        trackRowHtml(t) + plansOf(t.id).map(p => planRowHtml(p, ofDay, true)).join('')
-      ).join('') + g.orphans.map(p => planRowHtml(p, ofDay, false)).join('');
-      const n = g.tracks.length + g.orphans.length;
-      return `<div class="reg">
-        <div class="regline"><b>${esc(name)}</b><em>${n}</em></div>${rows}</div>`;
-    }).join('');
-
-    return `<details class="daygroup"${di === 0 ? ' open' : ''}>
-      <summary><span class="dayline"><b>${dateHuman(date)}</b><em>${nTracks(d.tracks)} · ${nPlans(d.plans)}</em></span></summary>
-      ${body}</details>`;
-  }).join('');
-
-  box.querySelectorAll('.track').forEach(el => {
-    const id = el.dataset.id;
-    const toggle = async () => { selected.has(id) ? selected.delete(id) : selected.add(id); renderList(); await renderAll(true); };
-    el.addEventListener('click', e => {
-      if (e.target.dataset.del || e.target.dataset.reg || e.target.dataset.regin) return;
-      toggle();
-    });
-    el.addEventListener('keydown', e => {
-      if (e.target !== el) return;
-      if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
-    });
-  });
-  box.querySelectorAll('[data-del]').forEach(b =>
-    b.addEventListener('click', e => { e.stopPropagation(); removeTrack(b.dataset.del); }));
-  box.querySelectorAll('[data-delplan]').forEach(b =>
-    b.addEventListener('click', e => { e.stopPropagation(); removePlan(b.dataset.delplan); }));
-  box.querySelectorAll('[data-rebuild]').forEach(b =>
-    b.addEventListener('click', e => { e.stopPropagation(); rebuildFromRaw(b.dataset.rebuild); }));
-  box.querySelectorAll('[data-link]').forEach(s =>
-    s.addEventListener('change', e => { e.stopPropagation(); linkPlan(s.dataset.link, s.value); }));
-  box.querySelectorAll('[data-reg]').forEach(b =>
-    b.addEventListener('click', e => { e.stopPropagation(); editingRegion = b.dataset.reg; renderList(); }));
-
-  const input = box.querySelector('[data-regin]');
-  if (input){
-    let cancelled = false;
-    input.focus(); input.select();
-    input.addEventListener('click', e => e.stopPropagation());
-    input.addEventListener('blur', () => { if (!cancelled) saveRegion(input.dataset.regin, input.value); });
-    input.addEventListener('keydown', e => {
-      e.stopPropagation();
-      if (e.key === 'Enter'){ e.preventDefault(); input.blur(); }
-      if (e.key === 'Escape'){ cancelled = true; editingRegion = null; renderList(); }
-    });
-  }
+  if (opts.total) body.push(h('tr', { class:'total' }, cols.map(c => cell(c, opts.total))));
+  return h('table', null,
+    opts.caption ? h('caption', { class:'note', style:'text-align:left;padding:6px 9px' }, opts.caption) : null,
+    h('thead', null, h('tr', null, cols.map(c => h('th', { class:c.num ? 'num' : null, scope:'col' }, c.t)))),
+    h('tbody', null, body));
 }
-
-/* ============ расчёт по треку (чистая функция) ============ */
-function computeTrack(pts, g){
-  const rows = [];
-  let totalM = 0, gapM = 0, gaps = 0, maxGap = 0, coveredSec = 0, cum = 0;
-  pts.forEach((p,i) => {
-    const prev = i ? pts[i-1] : null;
-    const dt = prev ? (new Date(p.t) - new Date(prev.t))/1000 : 0;
-    const ds = prev ? haversine(prev, p) : 0;
-    const longPause = !!prev && dt > g;
-    const isGap   = longPause && ds > GAP_MIN_M;   // молчал и при этом уехал — путь неизвестен
-    const isDwell = longPause && !isGap;           // молчал, но остался на месте — стоянка
-    cum += ds; totalM += ds;
-    if (isGap){ gaps++; gapM += ds; if (dt > maxGap) maxGap = dt; }
-    else if (prev) coveredSec += dt;               // стоянка — тоже покрытое время: мы знаем, где он был
-    rows.push({ n: i+1, p, dt, ds, cum, isGap, isDwell });
-  });
-  const spanSec = pts.length > 1 ? (new Date(pts[pts.length-1].t) - new Date(pts[0].t))/1000 : 0;
-  return { rows, totalM, gapM, gaps, maxGap, coveredSec, spanSec,
-           minT: pts.length ? pts[0].t : null, maxT: pts.length ? pts[pts.length-1].t : null };
-}
-
-/* ============ сопоставление остановки с точкой трека ============ */
-/* Ищем первую точку в радиусе, но не по всему треку, а начиная с точки, на которой
-   сматчилась предыдущая остановка. Иначе проезд мимо будущей остановки по дороге к
-   текущей даёт ложное раннее прибытие, а порядок остановок переворачивается. */
-function matchStops(stops, rows, radiusM){
-  const pts = rows.map(r => r.p);
-  /* «заезжал» — это когда машина в радиусе ОСТАНОВИЛАСЬ. Проезд мимо по дороге
-     к другой точке тоже засчитываем (так просил заказчик), но помечаем отдельно. */
-  const still = r => !!r && r.dt >= DWELL_MIN_S && r.ds <= DWELL_MAX_M;
-  const stood = i => still(rows[i]) || still(rows[i+1]);
-
-  const out = stops.map(s => {
-    const res = { stop: s, i: null, distM: null, nearestM: null, t: null,
-                  gapBefore: 0, driveBy: false, visitNo: null, outOfOrder: false };
-    if (s.lat === null || s.lon === null || !pts.length) return res;
-
-    /* Ищем по всему треку: водитель вправе пропустить точку и закрыть её позже.
-       Порядок не отбрасывает точки — он считается отдельно и показывается. */
-    let first = -1, withStop = -1;
-    for (let i = 0; i < pts.length; i++){
-      if (haversine(s, pts[i]) > radiusM) continue;
-      if (first < 0) first = i;
-      if (stood(i)){ withStop = i; break; }
-    }
-    const idx = withStop >= 0 ? withStop : first;
-    if (idx >= 0){
-      res.i = idx;
-      res.distM = res.nearestM = haversine(s, pts[idx]);
-      res.t = pts[idx].t;
-      res.gapBefore = idx > 0 ? (new Date(pts[idx].t) - new Date(pts[idx-1].t))/1000 : 0;
-      res.driveBy = withStop < 0;
-      return res;
-    }
-    /* полный проход только для ненайденных: расстояние до ближайшей точки —
-       единственное, что объясняет, пропуск это или дыра в треке */
-    let nearest = Infinity;
-    for (let i = 0; i < pts.length; i++){
-      const d = haversine(s, pts[i]);
-      if (d < nearest) nearest = d;
-    }
-    res.nearestM = nearest;
-    return res;
-  });
-
-  /* фактическая очерёдность заездов против плановой */
-  const hit = out.filter(r => r.i !== null);
-  hit.slice().sort((a,b) => a.t < b.t ? -1 : a.t > b.t ? 1 : 0).forEach((r,k) => r.visitNo = k+1);
-  hit.slice().sort((a,b) => a.stop.seq - b.stop.seq).forEach((r,k) => { r.outOfOrder = r.visitNo !== k+1; });
-  return out;
-}
-
-/* ============ карта ============ */
-function initMap(){
-  /* Leaflet тянется с CDN под проверкой контрольной суммы: если он не пришёл,
-     таблицы и расчёты должны работать дальше, а не падать вместе с картой */
-  if (typeof L === 'undefined'){
-    document.getElementById('map').innerHTML =
-      '<div class="empty"><b>Карта не загрузилась</b>Leaflet не пришёл с CDN или не совпала его контрольная сумма. ' +
-      'Расчёты, таблицы и выгрузка работают, карты не будет.</div>';
-    return;
-  }
-  map = L.map('map', { preferCanvas: true }).setView([40.52, 70.94], 12);
-  const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
-  let warned = false;
-  tiles.on('tileerror', () => { if (!warned){ warned = true; document.getElementById('tilewarn').style.display = 'block'; } });
-  factLayer = L.layerGroup().addTo(map);
-  gapLayer  = L.layerGroup().addTo(map);
-  planLayer = L.layerGroup().addTo(map);
-}
-
-/* разрывы — отдельным слоем: это самая обманчивая часть картинки,
-   её должно быть видно как «данных нет», и её должно быть можно убрать */
-function applyLayers(){
-  if (!map) return;
-  [['ly-plan', planLayer], ['ly-fact', factLayer], ['ly-gap', gapLayer]].forEach(([id, lay]) => {
-    if (!lay) return;
-    if (layerOn[id] === false) map.removeLayer(lay); else map.addLayer(lay);
-  });
-}
-function wireLayers(){
-  ['ly-plan','ly-fact','ly-gap'].forEach(id => {
-    const el = document.getElementById(id);
-    el.checked = layerOn[id] !== false;
-    el.addEventListener('change', async () => {
-      layerOn[id] = el.checked; await saveSettings(); applyLayers();
-    });
-  });
-  applyLayers();
-}
-
-/* Линия рисуется по всем точкам — это фактический путь и пробег.
-   Кружки ставятся только там, где водитель стоял: короткие шаги скрыты. */
-function drawFact(rec, c, bounds, keep){
-  let stop = 0;
-  c.rows.forEach((r,i) => {
-    const p = r.p;
-    bounds.push([p.lat, p.lon]);
-
-    if (i){
-      const prev = c.rows[i-1].p;
-      const seg = [[prev.lat, prev.lon],[p.lat, p.lon]];
-      if (r.isGap){
-        /* через разрыв путь неизвестен. Волосок рисуем всегда, иначе трек
-           рассыпается на куски и маршрут не читается; заметную подсветку
-           разрыва можно выключить галкой. */
-        L.polyline(seg, { color: rec.color, weight:1, opacity:.25, dashArray:'1,6' }).addTo(factLayer);
-        L.polyline(seg, { color:'#A63D40', weight:2, opacity:.5, dashArray:'4,6' }).addTo(gapLayer);
-      } else {
-        L.polyline(seg, { color: rec.color, weight:4, opacity:.85 }).addTo(factLayer);
-      }
-    }
-    if (!keep(r, i, c.rows.length)) return;
-
-    const first = i === 0, last = i === c.rows.length-1;
-    stop++;
-    const cls = 'factpin-dot' + (first ? ' start' : last ? ' finish' : '');
-    const m = L.marker([p.lat, p.lon], {
-      icon: L.divIcon({ className:'factpin',
-        html:`<span class="${cls}" style="--c:${rec.color}">${stop}</span>`,
-        iconSize:[20,20], iconAnchor:[10,10] })
-    }).bindTooltip(
-      `<b>${esc(rec.driver)}</b><br>стоянка №${stop}${first?' · старт':last?' · финиш':''}<br>` +
-      `${hhmmss(p.t)} · точка №${r.n}<br>` +
-      `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>пробег ${km(r.cum)} км` +
-      (r.dt ? '<br>' + (r.isGap
-        ? 'трекер молчал ' + dur(r.dt) + ', за это время машина ушла на ' + Math.round(r.ds) + ' м — как ехал, неизвестно'
-        : 'стоял ' + dur(r.dt)) : ''),
-      { className:'gps', direction:'top', offset:[0,-12] }
-    ).addTo(factLayer);
-    markers.push({ key: rec.id+'-'+i, m, on: () => hot(m, true), off: () => hot(m, false) });
-  });
-}
-
-/* связь строки таблицы с меткой на карте — одна на все три таблицы */
-function wireRows(tbody, list){
-  tbody.querySelectorAll('tr').forEach(tr => {
-    const hit = list.find(x => x.key === tr.dataset.key);
-    if (!hit) return;
-    tr.addEventListener('mouseenter', hit.on); tr.addEventListener('mouseleave', hit.off);
-    tr.addEventListener('focus', hit.on);      tr.addEventListener('blur', hit.off);
-    tr.addEventListener('click', () => map && map.setView(hit.m.getLatLng(), Math.max(map.getZoom(), 16)));
-  });
-}
-
-/* подсветка метки при наведении на строку таблицы */
-function hot(m, on){
-  const el = m.getElement && m.getElement();
-  if (el && el.firstChild) el.firstChild.classList.toggle('hot', on);
-  on ? m.openTooltip() : m.closeTooltip();
-}
-
-/* План: пронумерованные точки в плановом порядке, соединённые пунктиром.
-   Один цвет на все планы, форма тоже другая — с факт-треком не спутать. */
-function drawPlan(rows, bounds, routes){
-  /* если маршрутизатор прислал геометрию — план идёт по улицам, и прямые
-     между остановками уже не нужны: они врали о пути между точками */
-  Object.keys(routes || {}).forEach(planId => {
-    const line = routes[planId];
-    if (!line || line.length < 2) return;
-    L.polyline(line, { color: PLAN_COLOR, weight: 3, opacity: .55 }).addTo(planLayer);
-    line.forEach(pt => bounds.push(pt));
-  });
-
-  rows.forEach(r => {
-    const s = r.stop;
-    if (s.lat === null || s.lon === null) return;
-    bounds.push([s.lat, s.lon]);
-
-    const found = r.i !== null;
-    const m = L.marker([s.lat, s.lon], {
-      icon: L.divIcon({
-        className: 'planpin',
-        html: `<span class="planpin-dot${found ? '' : ' miss'}">${s.seq}</span>`,
-        iconSize: [22,22], iconAnchor: [11,11]
-      }),
-      zIndexOffset: 1000
-    }).bindTooltip(
-      `<b>План №${s.seq}${r.driver ? ' · ' + esc(r.driver) : ''}</b><br>` +
-      (s.address ? esc(s.address) + '<br>' : '') +
-      'план ' + (s.plannedArrival ? hhmm(s.plannedArrival) : '—') +
-      ' · факт ' + (found ? hhmm(r.t) : 'не найден') + '<br>' +
-      (found ? 'точка в ' + Math.round(r.distM) + ' м'
-             : 'ближайшая точка в ' + (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')),
-      { className:'gps', direction:'top', offset:[0,-12] }
-    ).addTo(planLayer);
-    planMarkers.push({ key: r.key, m, on: () => hot(m, true), off: () => hot(m, false) });
-
-    if (found) L.polyline([[s.lat,s.lon],[r.p.lat,r.p.lon]], {
-      color: PLAN_COLOR, weight: 1, opacity: .45, dashArray: '2,3'
-    }).addTo(planLayer);
-  });
-
-}
-
-/* ============ сборка всего ============ */
-async function renderAll(fit){
-  const my = ++renderSeq;
-  const ids = index.filter(r => selected.has(r.id)).map(r => r.id);
-
-  const loaded = [];
-  for (const id of ids){
-    let pts;
-    try { pts = await points(id); }
-    catch(e){ say('msg','Не прочитались точки. ' + e.message, 'err'); continue; }
-    if (my !== renderSeq) return;                 // пока грузили, выбор успел смениться
-    loaded.push({ rec: index.find(x => x.id === id), pts });
-  }
-
-  /* остановки связанных планов — до отрисовки, чтобы карта и таблицы сошлись */
-  const stopsByPlan = {}, planRoutes = {};
-  for (const { rec } of loaded){
-    for (const p of plansOf(rec.id)){
-      if (p.polyline && !routeCache[p.id]) routeCache[p.id] = decodePolyline(p.polyline, 5);
-      if (routeCache[p.id] && routeCache[p.id].length > 1) planRoutes[p.id] = routeCache[p.id];
-      if (!p.stops) continue;
-      try { stopsByPlan[p.id] = await stopsOf(p.id); }
-      catch(e){ say('msg', 'Не прочитались остановки плана. ' + e.message, 'err'); }
-      if (my !== renderSeq) return;
-    }
-  }
-
-  if (map){ factLayer.clearLayers(); gapLayer.clearLayers(); planLayer.clearLayers(); }
-  markers = []; planMarkers = [];
-  const g = gapSec(), pauseS = pauseSec(), radius = radiusM();
-  const keep = (r, i, n) => i === 0 || i === n-1 || r.dt >= pauseS;
-  const bounds = [], pointRows = [], summary = [], stopRows = [];
-  let hiddenPoints = 0;
-  let totalM = 0, gapM = 0, gaps = 0, maxGap = 0, coveredSec = 0, spanSec = 0;
-  let minT = null, maxT = null, planKm = 0, factCmpKm = 0, cmp = 0, shown = 0, multi = 0, noRegion = 0;
-
-  for (const { rec, pts } of loaded){
-    if (!pts.length) continue;
-    shown++;
-    const c = computeTrack(pts, g);
-    if (map) drawFact(rec, c, bounds, keep);
-    c.rows.forEach((r,i) => {
-      if (keep(r, i, c.rows.length)) pointRows.push(Object.assign({ key: rec.id+'-'+i, rec }, r));
-      else hiddenPoints++;
-    });
-
-    const ps = plansOf(rec.id);
-
-    /* сверка по каждой плановой точке */
-    for (const p of ps){
-      const stops = stopsByPlan[p.id];
-      if (!stops || !stops.length) continue;
-      matchStops(stops, c.rows, radius).forEach(r => {
-        r.key = p.id + '-' + r.stop.seq;
-        r.driver = rec.driver;
-        r.rec = rec;
-        r.p = r.i === null ? null : pts[r.i];
-        r.planId = p.id;
-        stopRows.push(r);
-      });
-    }
-    const pk = ps.reduce((s,p) => s + (p.km || 0), 0);
-    /* Δ считается только по трекам, у которых план известен: иначе факт без плана
-       уходит в вычитаемое и Δ систематически показывает перерасход */
-    if (ps.some(p => p.km !== null)){ planKm += pk; factCmpKm += c.totalM/1000; cmp++; }
-    if (ps.length > 1) multi++;
-    if (!rec.region) noRegion++;
-
-    totalM += c.totalM; gapM += c.gapM; gaps += c.gaps; coveredSec += c.coveredSec; spanSec += c.spanSec;
-    if (c.maxGap > maxGap) maxGap = c.maxGap;
-    if (!minT || c.minT < minT) minT = c.minT;
-    if (!maxT || c.maxT > maxT) maxT = c.maxT;
-
-    summary.push({
-      date: rec.date, region: rec.region || NO_REGION, driver: rec.driver, plate: rec.plate,
-      points: c.rows.length, coverage: c.spanSec ? c.coveredSec/c.spanSec : null,
-      gaps: c.gaps, factKm: c.totalM/1000, gapKm: c.gapM/1000,
-      planKm: ps.some(p => p.km !== null) ? pk : null, plansCount: ps.length
-    });
-  }
-
-  if (my !== renderSeq) return;
-  if (map) drawPlan(stopRows, bounds, planRoutes);
-  if (map && fit && bounds.length) map.fitBounds(bounds, { padding:[28,28], maxZoom:16 });
-
-  pointRows.sort((a,b) => a.p.t < b.p.t ? -1 : a.p.t > b.p.t ? 1 : 0);
-  renderPoints(pointRows, hiddenPoints);
-  renderStops(stopRows, { tracks: shown, plans: loaded.flatMap(l => plansOf(l.rec.id)) });
-  renderSummary(summary, { multi, noRegion });
-
-  const cov = spanSec ? Math.round(100*coveredSec/spanSec) : null;
-  const delta = cmp ? planKm - factCmpKm : null;
-  const hit = stopRows.filter(r => r.i !== null).length;
-  renderStats([
-    { v: shown, label: 'треков выбрано' },
-    ...(stopRows.length ? [{ v: hit + ' из ' + stopRows.length, label: 'плановых точек посещено',
-                             warn: hit < stopRows.length }] : []),
-    { v: pointRows.length, label: 'остановок показано' },
-    { v: cov === null ? '—' : cov + '%', label: 'покрытие GPS', warn: cov !== null && cov < 50 },
-    { v: km(totalM), label: 'км по трекеру' },
-    { v: km(gapM), label: 'из них на разрывах', warn: gapM > 0 },
-    { v: cmp ? planKm.toFixed(2) : '—', label: 'км план' },
-    { v: delta === null ? '—' : (delta >= 0 ? '+' : '') + delta.toFixed(2),
-      label: 'Δ план − факт' + (cmp && cmp < shown ? ` (по ${cmp} из ${shown})` : '') },
-    { v: minT ? hhmm(minT)+'–'+hhmm(maxT) : '—', label: 'период' },
-    { v: gaps, label: 'разрывов', warn: gaps > 0 },
-    { v: maxGap ? dur(maxGap) : '—', label: 'макс. разрыв', warn: maxGap > 0 }
-  ]);
-  window.__rows = pointRows;
-}
-
-/* ============ таблица «план / факт» по остановкам ============ */
-/* Пустая таблица должна объяснять, чего именно не хватает этому дню,
-   а не отсылать к общей инструкции. */
-function whyNoStops(ctx){
-  if (!ctx.tracks) return 'Выберите трек слева — сверка появится здесь.';
-  if (!ctx.plans || !ctx.plans.length)
-    return '<b>У выбранных треков нет плана.</b>Добавьте план в блоке «Добавить план» слева: он свяжется с треком по паре водитель + дата.';
-  const bare = ctx.plans.filter(p => !p.stops);
-  if (bare.length === ctx.plans.length){
-    const p = bare[0];
-    return `<b>План есть, но он без остановок — сверять не с чем.</b>` +
-      `План «${esc(p.driver)}» за ${dateHuman(p.date)} заведён только шапкой: километраж есть, точек нет. ` +
-      `Откройте «Добавить план», впишите того же водителя и ту же дату, вставьте в поле «JSON ответа с планом» ответ запроса` +
-      (p.ext ? ` <code>${esc(p.ext)}</code>` : '') +
-      ` и нажмите «Добавить план». Инструмент покажет, что распознал, и после записи эта таблица заполнится, а на карте появятся плановые точки.`;
-  }
-  return '<b>Остановки не прочитались.</b>План с остановками есть, но точки не загрузились — посмотрите сообщение об ошибке в блоке слева.';
-}
-
-function devMin(planIso, factIso){
-  if (!planIso || !factIso) return null;
-  return (new Date(factIso) - new Date(planIso))/60000;
-}
-function signed(v, unit){
-  if (v === null) return '—';
-  const r = Math.round(v);
-  return (r > 0 ? '+' : '') + r + (unit ? ' ' + unit : '');
-}
-
-function renderStops(rows, ctx){
-  lastPlanFact = rows;
-  const tb = document.getElementById('tb-stops');
-  const empty = document.getElementById('empty-stops');
-  empty.style.display = rows.length ? 'none' : 'block';
-  if (!rows.length) empty.innerHTML = whyNoStops(ctx || {});
-
-  tb.innerHTML = rows.map(r => {
-    const s = r.stop, found = r.i !== null;
-    const dev = found ? devMin(s.plannedArrival, r.t) : null;
-    /* до сопоставленной точки был разрыв — реальный приезд мог быть где угодно внутри него */
-    const blind = found ? Math.round(r.gapBefore/60) : null;
-    const shaky = found && dev !== null && blind !== null && blind >= Math.abs(dev);
-    return `<tr data-key="${r.key}" data-gap="${shaky || (found && r.gapBefore > gapSec()) ? 1 : 0}" tabindex="0">
-      <td class="num r">${s.seq}</td>
-      <td class="who">${esc(r.driver)}</td>
-      <td class="who" title="${esc(s.address || s.label || '')}">${esc(s.address || s.label || '—')}</td>
-      <td class="num r">${s.plannedArrival ? hhmm(s.plannedArrival) : '—'}</td>
-      <td class="num r dim" title="Отметка о приезде в самом маршрутизаторе">${s.reportedArrival ? hhmm(s.reportedArrival) : '—'}</td>
-      <td class="num r">${found ? hhmm(r.t) : '—'}</td>
-      <td class="num r">${dev === null ? '—' : signed(dev, 'мин')}</td>
-      <td class="num r dim">${blind === null ? '—' : (blind ? '±' + blind + ' мин' : 'точно')}</td>
-      <td class="num r">${found ? Math.round(r.distM) + ' м'
-                                : (r.nearestM === null ? '—' : Math.round(r.nearestM) + ' м')}</td>
-      <td>${found
-          ? (r.outOfOrder ? `да, вне очереди · заезд ${r.visitNo}-й` : 'да, по плану')
-            + (r.driveBy ? ' · проехал не останавливаясь' : '')
-          : s.lat === null ? 'нет координат' : 'нет, не заезжал'}</td>
-    </tr>`;
-  }).join('');
-
-  wireRows(tb, planMarkers);
-
-  const notes = [];
-  let bad = false;
-  if (rows.length){
-    const R = radiusM();
-    const hit  = rows.filter(r => r.i !== null).length;
-    const miss = rows.filter(r => r.i === null && r.stop.lat !== null);
-    const far  = miss.filter(r => r.nearestM !== null && r.nearestM > 5000);
-
-    const off  = rows.filter(r => r.outOfOrder).length;
-    const pass = rows.filter(r => r.driveBy).length;
-    notes.push(`Посещено ${hit} из ${rows.length}: точка засчитана, если трек подошёл к ней ближе ${R} м.`);
-    if (off) notes.push(`Не по плановой очерёдности: ${off}. Само по себе это не нарушение — точку можно пропустить и закрыть позже; смотреть надо на непосещённые.`);
-    if (pass) notes.push(`Трек прошёл без остановки через ${plural(pass, ['точку','точки','точек'])} — засчитаны по близости, но машина там не стояла.`);
-    if (miss.length){
-      bad = true;
-      notes.push(`Не закрыто за день: ${miss.length}. Вот это и есть нарушение — либо водитель туда не заезжал, либо трекер молчал как раз в этом месте (смотрите колонку «Расстояние»).`);
-    }
-    if (far.length && far.length === miss.length && miss.length > 2){
-      bad = true;
-      notes.push('Ближайшие точки за километры от плана — очень похоже, что в плане перепутаны широта и долгота. Перезалейте план с галкой «поменять широту и долготу».');
-    }
-    if (rows.some(r => r.i !== null && r.stop.plannedArrival))
-      notes.push('Колонка «Точность» — разрыв трека перед засчитанной точкой: если он больше отклонения, отклонение ничего не доказывает.');
-  }
-  const note = document.getElementById('stops-note');
-  note.textContent = notes.join(' ');
-  note.className = 'note' + (bad ? ' warn' : '');
-  note.style.display = notes.length ? 'block' : 'none';
-}
-
-function renderStats(list){
-  const bar = document.getElementById('bar');
-  bar.innerHTML = list.map(s =>
-    `<div class="stat${s.warn ? ' warn' : ''}"><b>${esc(s.v)}</b><span>${esc(s.label)}</span></div>`
-  ).join('') + `
-    <div class="spacer"></div>
-    <div class="ctl">UTC+<input type="number" id="in-tz" value="${tzValue}" min="-12" max="14" step="1"></div>
-    <div class="ctl">стоянка от <input type="number" id="in-pause" value="${pauseValue}" min="0" step="1"> мин</div>
-    <div class="ctl">радиус <input type="number" id="in-radius" value="${radiusValue}" min="10" step="10"> м</div>
-    <div class="ctl">разрыв от <input type="number" id="in-gap" value="${gapValue}" min="1" step="1"> мин</div>`;
-  wireSettings();
-}
-
-/* значения контролов живут отдельно: сама панель перерисовывается целиком */
-/* Точка считается посещённой, если трек подошёл к ней ближе радиуса — порядок
-   не участвует: водитель вправе пропустить точку и закрыть её позже. Отклонение
-   от плановой очерёдности считается отдельно и показывается в таблице. */
-let tzValue = 5, gapValue = 3, pauseValue = MIN_PAUSE_MIN, radiusValue = MATCH_RADIUS_M;
-let layerOn = {};            // какие слои карты показаны
-function wireSettings(){
-  const on = (id, apply, relist) => {
-    const el = document.getElementById(id);
-    el.addEventListener('change', async () => {
-      apply(el); await saveSettings();
-      if (relist) renderList();
-      await renderAll(false);
-    });
-  };
-  on('in-tz',     el => { tzValue = Number(el.value) || 0; }, true);
-  on('in-gap',    el => { gapValue = Math.max(1, Number(el.value) || 3); });
-  on('in-pause',  el => { pauseValue = Math.max(0, Number(el.value) || 0); });
-  on('in-radius', el => { radiusValue = Math.max(10, Number(el.value) || MATCH_RADIUS_M); });
-}
-async function saveSettings(){
-  await local.set(SET_KEY, JSON.stringify({
-    tz: tzValue, gap: gapValue, pause: pauseValue, radius: radiusValue,
-    layers: layerOn
-  }));
-}
-
-function renderPoints(rows, hidden){
-  const tb = document.getElementById('tb-points');
-  document.getElementById('empty-points').style.display = rows.length ? 'none' : 'block';
-
-  const note = document.getElementById('points-note');
-  const shown = hidden
-    ? `Скрыто точек в движении: ${hidden}. Показаны старт, финиш и те, перед которыми водитель простоял ${pauseSec()/60} мин и дольше. Пробег и покрытие считаются по всем точкам, фильтр только на показ.`
-    : '';
-  note.textContent = shown;
-  note.style.display = shown ? 'block' : 'none';
-  tb.innerHTML = rows.map(r => `
-    <tr data-key="${r.key}" data-gap="${r.isGap?1:0}" tabindex="0">
-      <td class="num r">${r.n}</td>
-      <td class="who"><span class="swatch" style="background:${r.rec.color}"></span>${esc(r.rec.driver)}</td>
-      <td class="num">${hhmmss(r.p.t)}</td>
-      <td class="num">${r.p.lat.toFixed(7)}</td>
-      <td class="num">${r.p.lon.toFixed(7)}</td>
-      <td class="num r">${isFinite(r.p.bearing) ? Math.round(r.p.bearing)+'°' : '—'}</td>
-      <td class="num r">${r.dt ? dur(r.dt) : '—'}</td>
-      <td class="num r">${r.ds ? Math.round(r.ds)+' м' : '—'}</td>
-      <td class="num r">${km(r.cum)} км</td>
-    </tr>`).join('');
-
-  wireRows(tb, markers);
-}
-
-/* ============ сводка: день → регион → водитель ============ */
-const pct = v => v === null ? '—' : Math.round(100*v) + '%';
-const dlt = (plan, fact) => plan === null ? null : plan - fact;
-
-function sumRow(e){
-  const d = dlt(e.planKm, e.factKm);
-  return `<tr>
-    <td class="num">${dateHuman(e.date)}</td>
-    <td>${esc(e.region)}</td>
-    <td class="who">${esc(e.driver)}</td>
-    <td class="num">${esc(e.plate || '—')}</td>
-    <td class="num r">${e.points}</td>
-    <td class="num r">${pct(e.coverage)}</td>
-    <td class="num r">${e.gaps}</td>
-    <td class="num r">${e.factKm.toFixed(2)}</td>
-    <td class="num r dim">${e.gapKm.toFixed(2)}</td>
-    <td class="num r">${e.planKm === null ? '—' : e.planKm.toFixed(2)}</td>
-    <td class="num r">${d === null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(2)}</td>
-    <td class="num r">${d === null || !e.planKm ? '—' : (d >= 0 ? '+' : '') + (100*d/e.planKm).toFixed(1)}</td>
-  </tr>`;
-}
-function aggRow(list, label, cls){
-  const fact = list.reduce((s,e) => s + e.factKm, 0);
-  const gapK = list.reduce((s,e) => s + e.gapKm, 0);
-  const known = list.filter(e => e.planKm !== null);
-  const plan = known.length ? known.reduce((s,e) => s + e.planKm, 0) : null;
-  /* Δ — только по сравнимым строкам, иначе факт без плана уходит в вычитаемое */
-  const d = dlt(plan, known.reduce((s,e) => s + e.factKm, 0));
-  const mark = plan !== null && known.length < list.length ? ` · Δ по ${known.length} из ${list.length}` : '';
-  return `<tr class="${cls}">
-    <td colspan="4">${esc(label + mark)}</td>
-    <td class="num r">${list.reduce((s,e) => s + e.points, 0)}</td>
-    <td class="num r">—</td>
-    <td class="num r">${list.reduce((s,e) => s + e.gaps, 0)}</td>
-    <td class="num r">${fact.toFixed(2)}</td>
-    <td class="num r dim">${gapK.toFixed(2)}</td>
-    <td class="num r">${plan === null ? '—' : plan.toFixed(2)}</td>
-    <td class="num r">${d === null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(2)}</td>
-    <td class="num r">${d === null || !plan ? '—' : (d >= 0 ? '+' : '') + (100*d/plan).toFixed(1)}</td>
-  </tr>`;
-}
-
-function renderSummary(entries, flags){
-  lastSummary = entries;
-  const tb = document.getElementById('tb-sum');
-  document.getElementById('empty-sum').style.display = entries.length ? 'none' : 'block';
-
-  const sorted = entries.slice().sort((a,b) =>
-    b.date.localeCompare(a.date) || a.region.localeCompare(b.region,'ru') || a.driver.localeCompare(b.driver,'ru'));
-
-  let html = '', bucket = [], key = null, groups = 0;
-  const flush = () => {
-    if (!bucket.length) return;
-    groups++;
-    if (bucket.length > 1) html += aggRow(bucket, `${bucket[0].region} · ${dateHuman(bucket[0].date)} · итого`, 'sub');
-    bucket = [];
-  };
-  sorted.forEach(e => {
-    const k = e.date + '|' + e.region;
-    if (k !== key){ flush(); key = k; }
-    html += sumRow(e); bucket.push(e);
-  });
-  flush();
-  /* при единственной группе общий итог дословно повторил бы подытог */
-  if (groups > 1) html += aggRow(sorted, 'Итого по выбранному', 'tot');
-  tb.innerHTML = html;
-
-  const notes = [];
-  const noPlan = entries.filter(e => e.planKm === null).length;
-  if (entries.length) notes.push('Факт по трекеру занижен: между точками рисуется прямая, повороты срезаются. Колонка «из них на разрывах» — километры, посчитанные через дыру в треке; это и есть зона недооценки.');
-  if (noPlan) notes.push(`Без планового километража: ${noPlan} из ${entries.length} — Δ по ним не считается.`);
-  if (flags.multi) notes.push(`Больше одного плана привязано к ${nTracks(flags.multi)} — плановые километры сложены.`);
-  if (flags.noRegion) notes.push(`Без региона: ${flags.noRegion}. Проставьте регион в списке слева, иначе они собьются в одну группу.`);
-  const note = document.getElementById('sum-note');
-  note.innerHTML = notes.map(esc).join(' ');
-  note.className = 'note' + (flags.noRegion || flags.multi ? ' warn' : '');
-  note.style.display = notes.length ? 'block' : 'none';
-}
+function put(id, node){ $(id).replaceChildren(node); }
 
 /* ============ CSV ============ */
-function toCSV(head, body, name){
-  /* ведущие = + - @ Excel читает как формулу: имя водителя из чужой системы
-     не должно ничего исполнить в файле, который понесут показывать */
-  const cell = v => {
-    let s = String(v ?? '');
-    if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+([.,]\d+)?$/.test(s)) s = "'" + s;
-    return /[;"\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
-  };
-  const text = [head.join(';'), ...body.map(r => r.map(cell).join(';'))].join('\r\n');
-  const blob = new Blob(['﻿' + text], { type:'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click(); URL.revokeObjectURL(a.href);
+const csvTables = {};   // имя → { cols, rows, file }
+/* Числа — с десятичной запятой (русский Excel читает «;» и «,»). Строки, начинающиеся
+   с = + - @, Excel выполнил бы как формулу — экранируем апострофом. */
+function csvValue(v){
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return Number.isFinite(v) ? String(Math.round(v * 1000) / 1000).replace('.', ',') : '';
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
-function csvPoints(){
-  const rows = window.__rows || [];
-  if (!rows.length){ say('msg','Сначала выберите хотя бы один трек.','err'); return; }
-  toCSV(
-    ['водитель','гос_номер','регион','дата','время_местное','время_utc','широта','долгота','курс','пауза_сек','отрезок_м','пробег_км'],
-    rows.map(r => [
-      r.rec.driver, r.rec.plate, r.rec.region, dateHuman(r.rec.date), hhmmss(r.p.t), r.p.t,
-      r.p.lat.toFixed(7), r.p.lon.toFixed(7),
-      isFinite(r.p.bearing) ? Math.round(r.p.bearing) : '',
-      Math.round(r.dt), Math.round(r.ds), (r.cum/1000).toFixed(3)
-    ]),
-    'treki-' + rows[0].rec.date + '.csv');
-}
-function csvStops(){
-  if (!lastPlanFact.length){ say('msg','Нет плановых остановок: загрузите план с JSON.','err'); return; }
-  toCSV(
-    ['водитель','номер_точки','адрес','план_время','отметка_в_системе','факт_gps','отклонение_мин','точность_мин','расстояние_м','приезжал','широта','долгота'],
-    lastPlanFact.map(r => {
-      const s = r.stop, found = r.i !== null;
-      const dev = found ? devMin(s.plannedArrival, r.t) : null;
-      return [
-        r.driver, s.seq, s.address || s.label || '',
-        s.plannedArrival ? hhmm(s.plannedArrival) : '',
-        s.reportedArrival ? hhmm(s.reportedArrival) : '',
-        found ? hhmm(r.t) : '',
-        dev === null ? '' : Math.round(dev),
-        found ? Math.round(r.gapBefore/60) : '',
-        found ? Math.round(r.distM) : (r.nearestM === null ? '' : Math.round(r.nearestM)),
-        found ? (r.outOfOrder ? 'да, вне очереди' : 'да') + (r.driveBy ? ', без остановки' : '')
-              : (s.lat === null ? 'нет координат' : 'нет'),
-        s.lat === null ? '' : s.lat.toFixed(7),
-        s.lon === null ? '' : s.lon.toFixed(7)
-      ];
-    }),
-    'plan-fakt-' + (lastPlanFact[0].rec ? lastPlanFact[0].rec.date : 'tochki') + '.csv');
+function downloadCsv(name){
+  const t = csvTables[name];
+  if (!t || !t.rows.length){ say('msg', 'Выгружать нечего: таблица пуста.', 'info'); return; }
+  const lines = [t.cols.map(c => csvValue(c.t)).join(';')]
+    .concat(t.rows.map(r => t.cols.map(c => csvValue(c.v(r))).join(';')));
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type:'text/csv;charset=utf-8' });
+  const a = h('a', { href:URL.createObjectURL(blob), download:t.file });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-function csvSummary(){
-  if (!lastSummary.length){ say('msg','Сначала выберите хотя бы один трек.','err'); return; }
-  toCSV(
-    ['дата','регион','водитель','гос_номер','точек','покрытие_проц','разрывов','факт_км','на_разрывах_км','план_км','дельта_км','дельта_проц'],
-    lastSummary.map(e => {
-      const d = dlt(e.planKm, e.factKm);
-      return [
-        dateHuman(e.date), e.region, e.driver, e.plate, e.points,
-        e.coverage === null ? '' : Math.round(100*e.coverage), e.gaps,
-        e.factKm.toFixed(3), e.gapKm.toFixed(3),
-        e.planKm === null ? '' : e.planKm.toFixed(3),
-        d === null ? '' : d.toFixed(3),
-        d === null || !e.planKm ? '' : (100*d/e.planKm).toFixed(1)
-      ];
-    }),
-    'svodka-' + lastSummary[0].date + '.csv');
+/* ============ состояние ============ */
+let settings = {}, settingRows = [], rules = {}, routes = [], anomalies = [], syncLog = [];
+let anomaliesByRoute = new Map(), loaded = null, openRoute = null, loadSeq = 0, detailSeq = 0;
+const cfg = k => n(settings[k]);
+const ruleTitle = code => (rules[code] && rules[code].title) || code;
+
+function filters(){
+  return { from:$('f-from').value, to:$('f-to').value, city:$('f-city').value, stable:$('f-stable').checked };
+}
+function saveUi(){ local.set(UI_KEY, JSON.stringify(filters())); }
+/* маршрут в статистике: не обкатка (если включён фильтр) и есть хоть одна закрытая точка */
+const statsFilter = () => { const stable = $('f-stable').checked; return r => !(stable && r.is_break_in) && !r.is_void; };
+
+/* ============ загрузка ============ */
+async function loadData(){
+  const f = filters();
+  if (!f.from || !f.to || f.from > f.to){ say('msg', 'Задайте период: дата «с» не позже даты «по».', 'err'); return; }
+  saveUi();
+  const seq = ++loadSeq;
+  detailSeq++;                       // открытая карточка маршрута из прошлой выборки устарела
+  conn('', 'загрузка…');
+  $('btn-load').disabled = true;
+  try {
+    const range = `route_date=gte.${q(f.from)}&route_date=lte.${q(f.to)}` + (f.city ? `&city=eq.${q(f.city)}` : '');
+    const [s, ru, r, a, l] = await Promise.all([
+      api('settings?select=key,value,note&order=key'),
+      api('anomaly_rules?select=code,title,description,sort&order=sort'),
+      apiAll(`v_route_metrics?select=*&${range}&order=route_date.desc,city,courier_name,route_id`),
+      apiAll(`v_anomalies?select=*&${range}&order=severity,route_date.desc,route_id,code`),
+      api('sync_log?select=*&order=id.desc&limit=200'),
+    ]);
+    if (seq !== loadSeq) return;   // пока грузили, запустили новую загрузку или вышли
+    settingRows = s;
+    settings = Object.fromEntries(s.map(x => [x.key, x.value]));
+    rules = Object.fromEntries(ru.map(x => [x.code, x]));
+    routes = r; anomalies = a; syncLog = l;
+    anomaliesByRoute = new Map();
+    for (const x of anomalies){
+      if (!anomaliesByRoute.has(x.route_id)) anomaliesByRoute.set(x.route_id, []);
+      anomaliesByRoute.get(x.route_id).push(x);
+    }
+    loaded = { from:f.from, to:f.to };
+    if (openRoute && !routes.some(x => x.route_id === openRoute)) openRoute = null;
+    /* настройки видны любому из белого списка; пустые — значит, почты в списке нет */
+    const missing = REQUIRED_SETTINGS.filter(k => settings[k] === undefined);
+    if (!s.length) say('msg', 'Вход выполнен, но доступ к данным не выдан: ваша почта не в белом списке. Обратитесь к администратору.', 'info');
+    else if (missing.length) say('msg', 'В настройках нет параметров: ' + missing.join(', ') + '. Связанные проверки не работают — добавьте их в таблицу settings.', 'err');
+    else say('msg', '');
+    conn('ok', `${session ? session.email : ''} · ${routes.length} маршрутов`);
+    renderAll();
+    /* открытая карточка — пересобрать по свежим данным, не переключая вкладку */
+    if (openRoute) showRoute(openRoute, { keepTab:true });
+  } catch(e){
+    if (seq !== loadSeq) return;
+    conn('err', 'данные не загрузились');
+    say('msg', e.message, 'err');
+  } finally {
+    if (seq === loadSeq) $('btn-load').disabled = false;
+  }
+}
+
+/* ============ агрегаты ============ */
+function aggregate(rows, inStats){
+  const covMin = cfg('a6_coverage_min');
+  const st = rows.filter(inStats);
+  /* план и факт складываем по одному и тому же набору маршрутов — где есть оба */
+  const both = st.filter(r => n(r.plan_km) !== null && n(r.gps_km) !== null);
+  const covOk = both.filter(r => covMin !== null && n(r.coverage_pct) !== null && n(r.coverage_pct) >= covMin && n(r.plan_km) > 0);
+  const pts = sum(st, r => r.deliveries) - sum(st, r => r.cancelled);
+  const an = st.flatMap(r => anomaliesByRoute.get(r.route_id) || []);
+  return {
+    routes:st.length,
+    days:new Set(st.map(r => r.route_date)).size,
+    couriers:new Set(st.map(r => r.courier_id || r.courier_name)).size,
+    bothRoutes:both.length,
+    plan:sum(both, r => r.plan_km), gps:sum(both, r => r.gps_km),
+    covRoutes:covOk.length,
+    ratio:sum(covOk, r => r.plan_km) ? sum(covOk, r => r.gps_km) / sum(covOk, r => r.plan_km) : null,
+    coverage:median(st.map(r => n(r.coverage_pct))),
+    closedShare:pts ? sum(st, r => r.closed) / pts : null,
+    cancelled:sum(st, r => r.cancelled), noRouting:sum(st, r => r.no_routing),
+    oooShare:sum(st, r => r.closed) ? sum(st, r => r.out_of_order) / sum(st, r => r.closed) : null,
+    impossible:sum(st, r => r.impossible_legs), late:sum(st, r => r.late_closes),
+    hours:median(st.map(r => n(r.work_hours))),
+    an1:an.filter(x => x.severity === 1).length, an2:an.filter(x => x.severity === 2).length,
+  };
+}
+function groupBy(rows, key){
+  const m = new Map();
+  for (const r of rows){ const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+  return m;
+}
+const fileName = base => `${base}_${loaded ? loaded.from + '_' + loaded.to : 'pusto'}.csv`;
+
+/* ============ отрисовка ============ */
+/* Каждый раздел рисуется отдельно: ошибка в одном не должна гасить остальные. */
+function renderAll(){
+  const parts = [['Сводка', renderSummary], ['Аномалии', renderAnomalies], ['Водители', renderDrivers],
+    ['Маршруты', renderRoutes], ['Загрузка', renderSync], ['Настройки', renderSettings]];
+  const failed = [];
+  for (const [name, fn] of parts){
+    try { fn(); } catch(e){ failed.push(`${name}: ${e.message}`); }
+  }
+  if (failed.length) say('msg', 'Часть разделов не отрисовалась — ' + failed.join('; '), 'err');
+}
+
+function renderSummary(){
+  const inStats = statsFilter();
+  const total = aggregate(routes, inStats);
+  const byCity = [...groupBy(routes, r => r.city)].map(([city, rows]) => ({ key:cityName(city), ...aggregate(rows, inStats) }))
+    .sort((a, b) => byText(a.key, b.key));
+  const covMin = cfg('a6_coverage_min');
+  $('kpis').replaceChildren(...[
+    [int(total.routes), 'маршрутов в статистике'],
+    [km(total.plan), 'план, км'],
+    [km(total.gps), 'факт GPS Dextra, км'],
+    [pct(total.ratio), `факт / план при покрытии ≥ ${covMin ?? '—'}%`],
+    [pct(total.closedShare), 'точек закрыто'],
+    [int(total.an1) + ' / ' + int(total.an2), 'аномалий: высоких / средних'],
+  ].map(([v, l]) => h('div', { class:'kpi' }, h('b', null, v), h('span', null, l))));
+
+  const cols = [
+    { t:'Город', v:r => r.key },
+    { t:'Маршрутов', v:r => r.routes, num:true, f:int },
+    { t:'Дней', v:r => r.days, num:true, f:int },
+    { t:'Водителей', v:r => r.couriers, num:true, f:int },
+    { t:'Покрытие GPS, медиана', v:r => r.coverage, num:true, f:v => v === null ? '—' : int(v) + '%', bad:r => covMin !== null && r.coverage !== null && r.coverage < covMin },
+    { t:'План, км', v:r => r.plan, num:true, f:km, title:r => `по ${r.bothRoutes} маршрутам, где есть и план, и факт` },
+    { t:'Факт GPS, км', v:r => r.gps, num:true, f:km },
+    { t:`Факт / план (покр. ≥ ${covMin ?? '—'}%)`, v:r => r.ratio, num:true, f:pct, title:r => `по ${r.covRoutes} маршрутам с хорошим покрытием` },
+    { t:'Точек закрыто', v:r => r.closedShare, num:true, f:pct },
+    { t:'Отменено', v:r => r.cancelled, num:true, f:int },
+    { t:'Вне оптимизации', v:r => r.noRouting, num:true, f:int, title:() => 'точки добавлены после построения маршрута' },
+    { t:'Вне очереди', v:r => r.oooShare, num:true, f:pct, title:() => 'доля закрытых точек, к которым вернулись после более поздних по плану' },
+    { t:'Невозм. переезды', v:r => r.impossible, num:true, f:int },
+    { t:'Закрыто поздно', v:r => r.late, num:true, f:int },
+    { t:'День, ч (медиана)', v:r => r.hours, num:true, f:v => v === null ? '—' : nf1.format(v) },
+    { t:'Аномалий выс. / сред.', v:r => r.an1 + ' / ' + r.an2, num:true },
+  ];
+  const totalRow = { key:'Итого', ...total };
+  put('tbl-sum', table(cols, byCity, { total:byCity.length > 1 ? totalRow : null }));
+  csvTables.sum = { cols, rows:byCity.concat(byCity.length > 1 ? [totalRow] : []), file:fileName('svodka') };
+
+  const excluded = routes.length - total.routes;
+  const notes = [];
+  if (excluded) notes.push(`Не вошло в статистику маршрутов: ${excluded} (${$('f-stable').checked ? 'период обкатки или ' : ''}ни одной закрытой точки).`);
+  notes.push(`Факт GPS — пробег по телефону водителя в Dextra; там, где покрытие ниже ${covMin ?? '—'}%, он занижен, поэтому факт / план считается только по маршрутам с хорошим покрытием.`);
+  const fix = settings.dextra_return_fix_date;
+  if (fix && loaded && loaded.from < fix) notes.push(`До ${ruDate(fix)} Dextra не считала обратную дорогу на склад: факт за эти дни занижен, и «факт меньше плана» — не экономия.`);
+  $('note-sum').textContent = notes.join(' ');
+}
+
+function renderAnomalies(){
+  const maxSev = Number($('f-sev').value);
+  const stable = $('f-stable').checked;
+  const ids = new Set(routes.filter(r => !(stable && r.is_break_in)).map(r => r.route_id));
+  const rows = anomalies.filter(a => a.severity <= maxSev && ids.has(a.route_id));
+  const cols = [
+    { t:'Важность', v:r => SEV_NAMES[r.severity], f:(v, r) => h('span', { class:'sev sev' + r.severity }, v) },
+    { t:'Дата', v:r => ruDate(r.route_date), mono:true },
+    { t:'Город', v:r => cityName(r.city) },
+    { t:'Водитель', v:r => r.courier_name },
+    { t:'Машина', v:r => r.plate, mono:true },
+    { t:'Что', v:r => ruleTitle(r.code) },
+    { t:'Подробно', v:r => r.message },
+  ];
+  put('tbl-anom', table(cols, rows, { onClick:r => showRoute(r.route_id), empty:'Аномалий нет — или период целиком в обкатке.' }));
+  csvTables.anom = { cols, rows, file:fileName('anomalii') };
+  put('tbl-anom-legend', table([
+    { t:'Код', v:r => r.code, mono:true }, { t:'Правило', v:r => r.title }, { t:'Что значит', v:r => r.description },
+  ], Object.values(rules), { empty:'Описания правил не загрузились.' }));
+}
+
+function renderDrivers(){
+  const inStats = statsFilter();
+  const covMin = cfg('a6_coverage_min');
+  const a12 = cfg('a12_min_legs');
+  const rows = [...groupBy(routes, r => r.courier_id || r.courier_name)].map(([, rs]) => {
+    const a = aggregate(rs, inStats);
+    return { name:rs[0].courier_name, city:cityName(rs[0].city), plates:[...new Set(rs.map(r => r.plate).filter(Boolean))].join(', '), ...a };
+  }).filter(r => r.routes > 0)
+    .sort((x, y) => (y.an1 - x.an1) || (y.an2 - x.an2) || byText(x.name, y.name));
+  const cols = [
+    { t:'Покрытие GPS', v:r => r.coverage, num:true, f:v => v === null ? '—' : int(v) + '%', bad:r => covMin !== null && r.coverage !== null && r.coverage < covMin },
+    { t:'Водитель', v:r => r.name },
+    { t:'Город', v:r => r.city },
+    { t:'Машина', v:r => r.plates, mono:true },
+    { t:'Маршрутов', v:r => r.routes, num:true, f:int },
+    { t:'План, км', v:r => r.plan, num:true, f:km },
+    { t:'Факт GPS, км', v:r => r.gps, num:true, f:km },
+    { t:'Факт / план', v:r => r.ratio, num:true, f:pct, weak:r => r.covRoutes === 0, title:r => `по ${r.covRoutes} из ${r.routes} маршрутов с покрытием ≥ ${covMin ?? '—'}%` },
+    { t:'Закрыто', v:r => r.closedShare, num:true, f:pct },
+    { t:'Вне очереди', v:r => r.oooShare, num:true, f:pct },
+    { t:'Невозм. переезды', v:r => r.impossible, num:true, f:int, bad:r => a12 !== null && r.impossible >= a12 },
+    { t:'Закрыто поздно', v:r => r.late, num:true, f:int, bad:r => r.late > 0 },
+    { t:'День, ч', v:r => r.hours, num:true, f:v => v === null ? '—' : nf1.format(v) },
+    { t:'Аномалий выс. / сред.', v:r => r.an1 + ' / ' + r.an2, num:true },
+  ];
+  put('tbl-drv', table(cols, rows));
+  csvTables.drv = { cols, rows, file:fileName('voditeli') };
+}
+
+function routeFlags(r){
+  const out = [];
+  if (r.is_break_in) out.push(['обкатка', '']);
+  if (r.is_void) out.push(['нет закрытых', 'bad']);
+  if (r.before_return_fix) out.push(['без возврата', '']);
+  for (const a of anomaliesByRoute.get(r.route_id) || []){
+    if (a.severity <= 2) out.push([a.code, a.severity === 1 ? 'bad' : 'warn']);
+  }
+  return out;
+}
+const flagNodes = list => list.map(([t, c]) => h('span', { class:'flag ' + c }, t));
+
+function renderRoutes(){
+  const covMin = cfg('a6_coverage_min');
+  const lowCov = r => covMin === null || n(r.coverage_pct) === null || n(r.coverage_pct) < covMin;
+  const cols = [
+    { t:'Дата', v:r => ruDate(r.route_date), mono:true },
+    { t:'Город', v:r => cityName(r.city) },
+    { t:'Водитель', v:r => r.courier_name },
+    { t:'Машина', v:r => r.plate, mono:true },
+    { t:'План, км', v:r => n(r.plan_km), num:true, f:km },
+    { t:'Факт GPS, км', v:r => n(r.gps_km), num:true, f:km },
+    { t:'Факт / план', v:r => n(r.gps_plan_ratio), num:true, f:pct, weak:lowCov },
+    { t:'Покрытие', v:r => n(r.coverage_pct), num:true, f:v => v === null ? '—' : int(v) + '%', bad:lowCov },
+    { t:'Точки', v:r => `${r.closed}/${r.deliveries - r.cancelled}`, num:true },
+    { t:'Окно дня', v:r => r.win_start && r.win_end ? `${tm(r.win_start, r.route_date)}–${tm(r.win_end, r.route_date)}` : '—', mono:true },
+    { t:'Флаги', v:r => routeFlags(r).map(x => x[0]).join(' '), f:(v, r) => flagNodes(routeFlags(r)) },
+  ];
+  put('tbl-rt', table(cols, routes, { onClick:r => showRoute(r.route_id), selected:r => r.route_id === openRoute }));
+  csvTables.rt = { cols, rows:routes, file:fileName('marshruty') };
+  if (!openRoute) $('route-detail').replaceChildren();
+}
+
+/* ============ один маршрут ============ */
+function closeRoute(){ openRoute = null; detailSeq++; renderRoutes(); }
+
+async function showRoute(routeId, opts){
+  openRoute = routeId;
+  if (!(opts && opts.keepTab)) selectTab('t-rt');
+  renderRoutes();
+  const r = routes.find(x => x.route_id === routeId);
+  if (!r) return;
+  const seq = ++detailSeq;
+  const box = $('route-detail');
+  box.replaceChildren(h('div', { class:'empty' }, 'Загружаю точки маршрута…'));
+  try {
+    const acts = await api(`dx_actions?select=*&route_id=eq.${q(routeId)}&order=completed_at.asc.nullslast,planned_at.asc.nullslast,action_id`);
+    if (seq !== detailSeq) return;
+    box.replaceChildren(...routeDetail(r, acts));
+    if (!(opts && opts.keepTab)) box.scrollIntoView({ behavior:'smooth', block:'start' });
+  } catch(e){
+    if (seq !== detailSeq) return;
+    box.replaceChildren(h('p', { class:'msg err' }, 'Точки не загрузились: ' + e.message));
+  }
+}
+
+/* Флаги точки — те же правила, что в представлении v_route_metrics:
+   номер в плане — по плановому времени, одинаковое время — один номер (dense_rank);
+   «вне очереди» — сравнение только с точками, закрытыми строго раньше; «пачка» —
+   одна и та же минута UTC. */
+function pointRows(r, acts){
+  const t = iso => Date.parse(iso);
+  const deliveries = acts.filter(a => a.type === 'delivery');
+  const planTimes = [...new Set(deliveries.filter(a => a.planned_at).map(a => t(a.planned_at)))].sort((x, y) => x - y);
+  const timeRank = new Map(planTimes.map((v, i) => [v, i + 1]));
+  const rank = new Map(deliveries.filter(a => a.planned_at).map(a => [a.action_id, timeRank.get(t(a.planned_at))]));
+  const rk = a => rank.get(a.action_id) ?? Infinity;
+  const isClosed = a => a.status === 'completed' && a.completed_at;
+  const closed = deliveries.filter(isClosed)
+    .sort((a, b) => (t(a.completed_at) - t(b.completed_at)) || (rk(a) - rk(b)) || byText(a.action_id, b.action_id));
+  const minuteOf = a => Math.floor(t(a.completed_at) / 60000);
+  const perMinute = groupBy(closed, minuteOf);
+  const ceilingAt = localMoment(r.route_date, settings.day_end_ceiling);
+  const quick = cfg('a7_quick_close_sec'), batch = cfg('a8_batch_points'), idleMin = cfg('a9_idle_min');
+  const speedMax = cfg('a12_speed_kmh'), minKm = cfg('a12_min_km');
+  const inDay = a => !ceilingAt || t(a.completed_at) <= ceilingAt.getTime();
+  /* максимальный номер в плане среди точек, закрытых строго раньше данного момента */
+  const maxRankBefore = new Map();
+  let running = 0;
+  for (let i = 0; i < closed.length; ){
+    const moment = t(closed[i].completed_at);
+    let j = i;
+    while (j < closed.length && t(closed[j].completed_at) === moment) j++;
+    maxRankBefore.set(moment, running);
+    for (let k = i; k < j; k++){ const pr = rank.get(closed[k].action_id); if (pr !== undefined) running = Math.max(running, pr); }
+    i = j;
+  }
+  const rows = closed.map((a, i) => {
+    const prev = closed[i - 1], next = closed[i + 1];
+    const pr = rank.get(a.action_id) ?? null;
+    const flags = [];
+    if (pr !== null && pr < maxRankBefore.get(t(a.completed_at))) flags.push(['вне очереди', 'warn']);
+    const dwell = minutesBetween(a.arrived_at, a.completed_at);
+    if (quick !== null && dwell !== null && dwell * 60 < quick) flags.push(['быстро', '']);
+    if (batch !== null && perMinute.get(minuteOf(a)).length >= batch) flags.push(['пачкой', '']);
+    let legKm = null, speed = null;
+    if (prev && n(prev.lat) !== null && n(a.lat) !== null){
+      legKm = haversineKm(prev, a);
+      const hours = Math.max((t(a.completed_at) - t(prev.completed_at)) / 3.6e6, 1 / 3600);
+      speed = legKm / hours;
+      if (minKm !== null && speedMax !== null && legKm > minKm && speed > speedMax) flags.push(['невозможный переезд', 'bad']);
+    }
+    if (!inDay(a)) flags.push(['поздно', 'bad']);
+    if (a.has_routing === false) flags.push(['вне оптимизации', '']);
+    /* простой — только внутри дня: ночь между поздним закрытием и утром не простой */
+    const idle = next && inDay(a) && next.on_the_way_at && (!ceilingAt || t(next.on_the_way_at) <= ceilingAt.getTime())
+      ? minutesBetween(a.completed_at, next.on_the_way_at) : null;
+    if (idleMin !== null && idle !== null && idle > idleMin) flags.push(['простой', 'warn']);
+    return { a, factNo:i + 1, planNo:pr, dwell, idle, legKm, speed, flags };
+  });
+  const rest = deliveries.filter(a => !isClosed(a))
+    .sort((x, y) => (rk(x) - rk(y)) || byText(x.action_id, y.action_id))
+    .map(a => {
+      const st = a.status === 'cancelled' ? ['отменена', ''] : a.status === 'completed' ? ['закрыта без времени', 'warn'] : ['не закрыта', 'bad'];
+      return { a, factNo:null, planNo:rank.get(a.action_id) ?? null, dwell:null, idle:null, legKm:null, speed:null,
+        flags:[st].concat(a.has_routing === false ? [['вне оптимизации', '']] : []) };
+    });
+  return rows.concat(rest);
+}
+
+function routeDetail(r, acts){
+  const covMin = cfg('a6_coverage_min');
+  const head = h('div', { class:'bar' },
+    h('h2', null, `${r.courier_name || 'Водитель не указан'} · ${cityName(r.city)} · ${ruDate(r.route_date)} · ${r.plate || 'без номера'}`),
+    h('button', { onclick:closeRoute }, 'Закрыть'));
+  const kp = h('div', { class:'kpis' }, ...[
+    [km(n(r.plan_km)), 'план Dextra, км'],
+    [km(n(r.gps_km)), 'факт GPS Dextra, км'],
+    ['—', 'факт IMG в окне дня, км (будет на этапе 3)'],
+    [n(r.coverage_pct) === null ? '—' : int(n(r.coverage_pct)) + '%', 'покрытие GPS'],
+    [`${r.closed}/${r.deliveries - r.cancelled}`, 'точек закрыто'],
+    [r.win_start && r.win_end ? `${tm(r.win_start, r.route_date)}–${tm(r.win_end, r.route_date)}` : '—',
+     `окно дня${n(r.work_hours) !== null ? ', ' + nf1.format(n(r.work_hours)) + ' ч' : ''}`],
+  ].map(([v, l]) => h('div', { class:'kpi' }, h('b', null, v), h('span', null, l))));
+  const notes = [];
+  if (r.is_break_in) notes.push('День в периоде обкатки Dextra — в статистику не идёт.');
+  if (r.before_return_fix) notes.push('До исправления Dextra не считала обратную дорогу на склад: факт GPS занижен на возврат.');
+  if (covMin !== null && (n(r.coverage_pct) === null || n(r.coverage_pct) < covMin)) notes.push(`Покрытие GPS ниже ${covMin}% — факт км недоказуем.`);
+  const an = anomaliesByRoute.get(r.route_id) || [];
+  const anTbl = an.length ? h('div', { class:'tbl' }, table([
+    { t:'Важность', v:x => SEV_NAMES[x.severity], f:(v, x) => h('span', { class:'sev sev' + x.severity }, v) },
+    { t:'Что', v:x => ruleTitle(x.code) }, { t:'Подробно', v:x => x.message },
+  ], an)) : null;
+  const cols = [
+    { t:'№ факт', v:p => p.factNo, num:true },
+    { t:'№ план', v:p => p.planNo, num:true },
+    { t:'Адрес', v:p => p.a.address || p.a.label },
+    { t:'Заказ', v:p => p.a.order_external_id, mono:true },
+    { t:'План', v:p => tm(p.a.planned_at, r.route_date), mono:true },
+    { t:'Выезд', v:p => tm(p.a.on_the_way_at, r.route_date), mono:true },
+    { t:'Приезд', v:p => tm(p.a.arrived_at, r.route_date), mono:true },
+    { t:'Закрыта', v:p => tm(p.a.completed_at, r.route_date), mono:true },
+    { t:'На точке, мин', v:p => p.dwell, num:true, f:v => v === null ? '—' : nf1.format(v) },
+    { t:'Переезд, км', v:p => p.legKm, num:true, f:v => v === null ? '—' : nf1.format(v), title:() => 'по прямой от предыдущей закрытой точки' },
+    { t:'Скорость, км/ч', v:p => p.speed, num:true, f:v => v === null ? '—' : int(v) },
+    { t:'Простой до выезда, мин', v:p => p.idle, num:true, f:v => v === null ? '—' : int(v) },
+    { t:'Флаги', v:p => p.flags.map(x => x[0]).join(' '), f:(v, p) => flagNodes(p.flags) },
+  ];
+  return [head, kp,
+    notes.length ? h('p', { class:'msg info' }, notes.join(' ')) : null,
+    anTbl,
+    h('p', { class:'note' }, 'Точки в порядке фактического закрытия; незакрытые и отменённые — в конце. «Переезд» и «скорость» — по прямой между плановыми координатами соседних закрытых точек.'),
+    h('div', { class:'tbl' }, table(cols, pointRows(r, acts), { empty:'У маршрута нет точек доставки.' })),
+  ].filter(Boolean);
+}
+
+/* ============ загрузка данных и настройки ============ */
+function renderSync(){
+  const last = [...groupBy(syncLog, x => x.city)].map(([city, rows]) => {
+    const ok = rows.find(x => x.status === 'ok');
+    const err = rows.find(x => x.status === 'error');
+    return { city:cityName(city), lastRun:rows[0].finished_at || rows[0].started_at, lastOkDay:ok ? ok.route_date : null,
+      error:err && (!ok || err.id > ok.id) ? `${ruDate(err.route_date)}: ${err.error || ''}` : '' };
+  }).sort((a, b) => byText(a.city, b.city));
+  put('tbl-sync-city', table([
+    { t:'Город', v:r => r.city },
+    { t:'Последний прогон', v:r => dt(r.lastRun), mono:true },
+    { t:'Последний день с маршрутами', v:r => ruDate(r.lastOkDay), mono:true },
+    { t:'Последняя ошибка', v:r => r.error, bad:r => !!r.error },
+  ], last, { empty:'Журнал синхронизации пуст.' }));
+  const stName = { ok:'загружено', empty:'маршрутов нет', error:'ошибка' };
+  put('tbl-sync', table([
+    { t:'Когда', v:x => dt(x.finished_at || x.started_at), mono:true },
+    { t:'Город', v:x => cityName(x.city) },
+    { t:'Дата маршрутов', v:x => ruDate(x.route_date), mono:true },
+    { t:'Итог', v:x => stName[x.status] || x.status, bad:x => x.status === 'error' },
+    { t:'Маршрутов', v:x => x.routes, num:true },
+    { t:'Точек', v:x => x.actions, num:true },
+    { t:'Ошибка', v:x => x.error },
+  ], syncLog.slice(0, 60)));
+}
+function renderSettings(){
+  put('tbl-cfg', table([
+    { t:'Параметр', v:x => x.key, mono:true }, { t:'Значение', v:x => x.value, mono:true }, { t:'Что значит', v:x => x.note },
+  ], settingRows));
 }
 
 /* ============ вкладки ============ */
-const TABS = [
-  { btn:'tab-stops',  pane:'pane-stops' },
-  { btn:'tab-points', pane:'pane-points' },
-  { btn:'tab-sum',    pane:'pane-sum' }
-];
+const TABS = ['t-sum', 't-anom', 't-drv', 't-rt', 't-sync', 't-cfg'];
 function selectTab(id){
-  TABS.forEach(t => {
-    const on = t.btn === id;
-    document.getElementById(t.btn).setAttribute('aria-selected', on);
-    document.getElementById(t.pane).hidden = !on;
-  });
+  for (const t of TABS){
+    const on = t === id;
+    $(t).setAttribute('aria-selected', String(on));
+    $(t).tabIndex = on ? 0 : -1;
+    $($(t).getAttribute('aria-controls')).hidden = !on;
+  }
 }
-TABS.forEach((t,i) => {
-  const b = document.getElementById(t.btn);
-  b.addEventListener('click', () => selectTab(t.btn));
-  b.addEventListener('keydown', e => {
+TABS.forEach((t, i) => {
+  $(t).addEventListener('click', () => selectTab(t));
+  $(t).addEventListener('keydown', e => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     e.preventDefault();
-    const next = TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length-1)) % TABS.length];
-    selectTab(next.btn); document.getElementById(next.btn).focus();
+    const next = TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
+    selectTab(next); $(next).focus();
   });
 });
 
 /* ============ вход и выход ============ */
 function showLogin(on){
-  document.getElementById('loginbox').hidden = !on;
-  document.getElementById('authed').hidden = on;
-  document.getElementById('btn-logout').hidden = on;
+  $('loginbox').hidden = !on;
+  $('authed').hidden = on;
+  $('filters').hidden = on;
+  $('btn-logout').hidden = on;
 }
-
 async function signIn(email, password){
-  const btn = document.getElementById('btn-login');
+  const btn = $('btn-login');
   btn.disabled = true; btn.textContent = 'Вход…';
   try {
-    await saveSession(await auth('password', { email, password }));
+    const epoch = authEpoch;
+    saveSession(await auth('password', { email, password }), epoch);
+    if (!session) return;
+    say('msg-login', '');
     showLogin(false);
     await loadData();
   } catch(e){
     conn('err', 'не вошли');
     say('msg-login', e.message, 'err');
   } finally {
-    document.getElementById('in-pass').value = '';
+    $('in-pass').value = '';
     btn.disabled = false; btn.textContent = 'Войти';
   }
 }
-
 async function signOut(reason){
   const token = session && session.access_token;
-  await dropSession();
-  index = []; plans = []; cache = {}; selected.clear();
+  authEpoch++;
+  dropSession();
+  /* на общем компьютере следующий вошедший не должен увидеть чужие данные */
+  loadSeq++; detailSeq++;
+  settings = {}; settingRows = []; rules = {}; routes = []; anomalies = []; syncLog = [];
+  anomaliesByRoute = new Map(); loaded = null; openRoute = null;
+  for (const k of Object.keys(csvTables)) delete csvTables[k];
+  ['kpis', 'tbl-sum', 'tbl-anom', 'tbl-anom-legend', 'tbl-drv', 'tbl-rt', 'route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg']
+    .forEach(id => $(id).replaceChildren());
+  $('note-sum').textContent = '';
+  say('msg', '');
   showLogin(true);
   conn('err', 'вход не выполнен');
-  renderList(); await renderAll(false);
   if (reason) say('msg-login', reason, 'err');
-  /* отзыв токена на сервере — уже после того, как локально всё вычищено */
+  /* только этот браузер: выход здесь не должен закрывать сессии на других устройствах */
   if (token) try {
-    await fetch(SUP_URL + '/auth/v1/logout', {
-      method: 'POST', headers: { 'apikey': SUP_KEY, 'Authorization': 'Bearer ' + token }
-    });
+    await fetch(SUP_URL + '/auth/v1/logout?scope=local', { method:'POST', headers:{ 'apikey':SUP_KEY, 'Authorization':'Bearer ' + token } });
   } catch(e){}
 }
 
-async function loadData(){
-  conn('', 'загрузка…');
-  try {
-    await fetchIndex();
-    await fetchPlans();
-    conn('ok', `${session.email || 'вход выполнен'} · ${nTracks(index.length)}`);
-    index.forEach(r => selected.add(r.id));
-    renderList(); await renderAll(true);
-  } catch(e){
-    conn('err', 'нет связи с базой');
-    say('msg', e.message, 'err');
-    renderList();
-  }
-}
-
 /* ============ события ============ */
-document.getElementById('loginbox').addEventListener('submit', e => {
+$('loginbox').addEventListener('submit', e => {
   e.preventDefault();
-  const email = document.getElementById('in-email').value.trim();
-  const pass  = document.getElementById('in-pass').value;
-  if (!email || !pass){ say('msg-login','Впишите почту и пароль.','err'); return; }
+  const email = $('in-email').value.trim(), pass = $('in-pass').value;
+  if (!email || !pass){ say('msg-login', 'Впишите почту и пароль.', 'err'); return; }
   signIn(email, pass);
 });
-document.getElementById('btn-logout').addEventListener('click', () => signOut(''));
-document.getElementById('btn-add').addEventListener('click', () => {
-  const raw = document.getElementById('in-json').value.trim();
-  if (!raw){ say('msg','Вставьте JSON ответа запроса history.','err'); return; }
-  addTrack(raw);
-});
-document.getElementById('btn-addplan').addEventListener('click', addPlan);
-document.getElementById('btn-planfile').addEventListener('click', () => document.getElementById('p-file').click());
-document.getElementById('p-file').addEventListener('change', e => {
-  const f = e.target.files[0]; if (!f) return;
-  const rd = new FileReader();
-  rd.onload = () => { document.getElementById('p-json').value = String(rd.result); addPlan(); };
-  rd.onerror = () => say('msg-plan', 'Файл не прочитался: ' + f.name, 'err');
-  rd.readAsText(f);
-  e.target.value = '';
-});
-document.getElementById('btn-file').addEventListener('click', () => document.getElementById('in-file').click());
-document.getElementById('in-file').addEventListener('change', e => {
-  const f = e.target.files[0]; if (!f) return;
-  const rd = new FileReader();
-  rd.onload = () => addTrack(String(rd.result));
-  rd.onerror = () => say('msg', 'Файл не прочитался: ' + f.name, 'err');
-  rd.readAsText(f);
-  e.target.value = '';
-});
-document.getElementById('btn-csv').addEventListener('click', () => {
-  const on = id => document.getElementById(id).getAttribute('aria-selected') === 'true';
-  if (on('tab-sum')) csvSummary();
-  else if (on('tab-stops')) csvStops();
-  else csvPoints();
-});
+$('btn-logout').addEventListener('click', () => signOut(''));
+$('btn-load').addEventListener('click', loadData);
+$('f-stable').addEventListener('change', () => { saveUi(); renderAll(); });
+$('f-sev').addEventListener('change', () => { try { renderAnomalies(); } catch(e){ say('msg', e.message, 'err'); } });
+document.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => downloadCsv(b.dataset.csv)));
 
 /* ============ старт ============ */
 (async function start(){
-  initMap();
-  const set = await local.get(SET_KEY);
-  if (set){
-    try { const s = JSON.parse(set);
-      if (isFinite(s.tz)) tzValue = Number(s.tz);
-      if (isFinite(s.gap)) gapValue = Math.max(1, Number(s.gap));
-      if (isFinite(s.pause)) pauseValue = Math.max(0, Number(s.pause));
-      if (isFinite(s.radius)) radiusValue = Math.max(10, Number(s.radius));
-      if (s.layers && typeof s.layers === 'object') layerOn = s.layers;
-    } catch(e){}
-  }
-  renderStats([{ v:'—', label:'треков выбрано' }]);
-  wireLayers();
+  for (const [code, name] of Object.entries(CITY_NAMES)) $('f-city').append(h('option', { value:code }, name));
+  const today = localDate(new Date());
+  const from = new Date(Date.parse(today + 'T00:00:00Z') - (DEFAULT_DAYS - 1) * 864e5).toISOString().slice(0, 10);
+  $('f-from').value = from; $('f-to').value = today;
+  try {
+    const ui = JSON.parse(local.get(UI_KEY) || 'null');
+    if (ui){
+      if (ui.from) $('f-from').value = ui.from;
+      if (ui.to) $('f-to').value = ui.to;
+      if (typeof ui.city === 'string') $('f-city').value = ui.city;
+      if (typeof ui.stable === 'boolean') $('f-stable').checked = ui.stable;
+    }
+  } catch(e){}
+  selectTab('t-sum');
 
-  const saved = await local.get(SESS_KEY);
-  if (saved){
-    try {
-      const s = JSON.parse(saved);
-      if (s && s.refresh_token) session = s;
-    } catch(e){}
-  }
-  if (!session){
-    showLogin(true); conn('err', 'вход не выполнен');
-    renderList(); return;
-  }
+  try { const s = JSON.parse(local.get(SESS_KEY) || 'null'); if (s && s.refresh_token) session = s; } catch(e){}
+  if (!session){ showLogin(true); conn('err', 'вход не выполнен'); return; }
   /* сессия из прошлого раза: проверяем её обновлением токена, а не первым же запросом */
   try {
-    await saveSession(await auth('refresh_token', { refresh_token: session.refresh_token }));
+    const epoch = authEpoch;
+    saveSession(await auth('refresh_token', { refresh_token:session.refresh_token }), epoch);
     showLogin(false);
     await loadData();
   } catch(e){
-    await dropSession();
-    showLogin(true); conn('err', 'вход не выполнен');
-    say('msg-login', e.message, 'err');
-    renderList();
+    if (isAuthRejection(e)){
+      dropSession();
+      showLogin(true); conn('err', 'вход не выполнен');
+      say('msg-login', e.message, 'err');
+    } else {
+      /* сеть или сервер входа недоступны — сессию не трогаем, можно повторить */
+      showLogin(false);
+      conn('err', 'нет связи');
+      say('msg', 'Сервер входа недоступен: ' + e.message + '. Обновите страницу позже.', 'err');
+    }
   }
 })();
 </script>

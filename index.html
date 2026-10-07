@@ -252,6 +252,16 @@
       </section>
 
       <section role="tabpanel" id="p-sync" aria-labelledby="t-sync" hidden>
+        <div class="bar"><h2>IMG — отчёты по поездкам</h2>
+          <input type="file" id="img-files" accept=".xlsx" multiple hidden>
+          <button class="btn" id="img-pick">Выбрать файлы…</button>
+          <button class="btn primary" id="img-write" disabled>Записать в базу</button></div>
+        <p class="note">Файлы «Отчёт по поездкам» из IMG, по одному на машину, за любой период. Поездки машины за период файла заменяются целиком — повторная загрузка не дублирует. Файл, в котором разбор не сошёлся с итогом самого отчёта, не записывается.</p>
+        <p class="msg" id="msg-img" aria-live="polite"></p>
+        <div class="tbl" id="tbl-img-preview"></div>
+        <div class="bar"><h2>Загружено из IMG</h2></div>
+        <div class="tbl" id="tbl-img-loads"></div>
+        <div class="bar"><h2>Dextra</h2></div>
         <p class="note">Маршруты загружаются автоматически каждый день в 20:00 по Ташкенту: сегодняшний день и три предыдущих.</p>
         <div class="tbl" id="tbl-sync-city"></div>
         <div class="bar"><h2>Журнал</h2></div>
@@ -358,10 +368,15 @@ async function freshToken(){
 }
 
 /* ============ клиент PostgREST ============ */
-async function api(path){
+/* opts: { method, body } — для вызова функций базы (rpc/…); по умолчанию GET */
+async function api(path, opts){
   if (!session) throw new Error('Нужно войти.');
+  const method = (opts && opts.method) || 'GET';
   const call = token => fetch(SUP_URL + '/rest/v1/' + path, {
-    headers:{ 'apikey':SUP_KEY, 'Authorization':'Bearer ' + token, 'Accept':'application/json' }
+    method,
+    headers:Object.assign({ 'apikey':SUP_KEY, 'Authorization':'Bearer ' + token, 'Accept':'application/json' },
+      method === 'GET' ? {} : { 'Content-Type':'application/json' }),
+    body:opts && opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   /* отказ сервера входа при обновлении токена — сессия мертва: на вход, а не по кругу */
   const expired = async () => { await signOut('Сессия истекла, войдите заново.'); return new Error('Сессия истекла.'); };
@@ -402,6 +417,158 @@ async function apiAll(path){
   }
 }
 const q = v => encodeURIComponent(String(v));
+
+/* ============ чтение xlsx без сторонних библиотек ============ */
+/* xlsx — это zip с XML. Браузер распаковывает deflate сам (DecompressionStream),
+   поэтому на страницу с токенами входа не подключается чужой скрипт. Хватает того,
+   что нужно отчётам IMG: общие строки, листы, значения ячеек. */
+const XLSX_MAX_BYTES = 30e6;        // файл отчёта IMG за полтора месяца — около 1 МБ
+const XLSX_MAX_UNPACKED = 80e6;     // защита от «zip-бомбы»: столько распакованного на часть файла
+async function readZip(buf){
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 66000); i--){
+    if (dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('это не файл Excel (.xlsx)');
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const entries = new Map(), dec = new TextDecoder();
+  for (let i = 0; i < count; i++){
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('повреждённый файл Excel');
+    const method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true);
+    const nLen = dv.getUint16(p + 28, true), xLen = dv.getUint16(p + 30, true), cLen = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nLen));
+    const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
+    entries.set(name, { method, data:u8.subarray(start, start + size) });
+    p += 46 + nLen + xLen + cLen;
+  }
+  return async name => {
+    const e = entries.get(name);
+    if (!e) return null;
+    if (e.method === 0) return dec.decode(e.data);
+    if (e.method !== 8) throw new Error('неизвестное сжатие в файле Excel');
+    /* распаковываем потоком со счётчиком: подложенный файл не съест память вкладки */
+    const reader = new Blob([e.data]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+    const parts = [];
+    let total = 0;
+    for (;;){
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > XLSX_MAX_UNPACKED){ reader.cancel(); throw new Error('файл Excel распаковывается в слишком большой объём'); }
+      parts.push(value);
+    }
+    return dec.decode(await new Blob(parts).arrayBuffer());
+  };
+}
+const xmlText = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+  .replace(/&#(\d+);/g, (m, c) => String.fromCodePoint(Number(c))).replace(/&amp;/g, '&');
+const colIndex = ref => { let n = 0; for (const ch of ref.replace(/\d+/g, '')) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+/* { имя листа → массив строк (массивы значений) } */
+async function readXlsx(file){
+  if (file.size > XLSX_MAX_BYTES) throw new Error(`файл больше ${XLSX_MAX_BYTES / 1e6} МБ — это не отчёт IMG`);
+  try { return await readXlsxUnchecked(file); }
+  catch(e){
+    /* сбой разбора битого файла (RangeError и т. п.) — понятными словами */
+    throw new Error(/файл|Excel|лист/.test(e.message) ? e.message : 'повреждённый файл Excel');
+  }
+}
+async function readXlsxUnchecked(file){
+  const get = await readZip(await file.arrayBuffer());
+  const wb = await get('xl/workbook.xml'), rels = await get('xl/_rels/workbook.xml.rels');
+  if (!wb || !rels) throw new Error('в файле нет листов Excel');
+  const shared = [];
+  const ss = await get('xl/sharedStrings.xml');
+  if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)){
+    shared.push(xmlText([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(t => t[1]).join('')));
+  }
+  const target = Object.fromEntries([...rels.matchAll(/<Relationship\b[^>]*>/g)].map(m => [
+    (/Id="([^"]+)"/.exec(m[0]) || [])[1], (/Target="([^"]+)"/.exec(m[0]) || [])[1]]));
+  const sheets = Object.create(null);   // имя листа «__proto__» не должно трогать прототип
+  for (const m of wb.matchAll(/<sheet\b[^>]*>/g)){
+    const name = xmlText((/name="([^"]*)"/.exec(m[0]) || [])[1] || '');
+    const rid = (/r:id="([^"]+)"/.exec(m[0]) || [])[1];
+    const path = (target[rid] || '').replace(/^\/?(xl\/)?/, 'xl/');
+    const xml = await get(path);
+    if (!xml) continue;
+    const rows = [];
+    for (const r of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)){
+      const row = [];
+      for (const c of r[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)){
+        const ref = (/r="([A-Z]+\d+)"/.exec(c[1]) || [])[1];
+        const type = (/t="([^"]+)"/.exec(c[1]) || [])[1];
+        const body = c[2] || '';
+        const v = (/<v>([\s\S]*?)<\/v>/.exec(body) || [])[1];
+        let val = null;
+        if (type === 's') val = shared[Number(v)] ?? null;
+        else if (type === 'inlineStr') val = xmlText([...body.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(t => t[1]).join(''));
+        else if (type === 'str' || type === 'e') val = v === undefined ? null : xmlText(v);
+        else if (type === 'b') val = v === '1';
+        else if (v !== undefined) val = Number(v);
+        row[ref ? colIndex(ref) : row.length] = val;
+      }
+      rows.push(row);
+    }
+    sheets[name] = rows;
+  }
+  return sheets;
+}
+
+/* ============ отчёт IMG «Отчёт по поездкам» ============ */
+/* «20.08.2026 08:03:56» (Ташкент) → ISO; время без даты берётся от даты начала,
+   а если оно раньше начала — значит, уже следующий день. */
+function imgMoment(text, baseIso){
+  const s = String(text ?? '').trim();
+  let m = /^(\d{2})\.(\d{2})\.(\d{4}) (\d{1,2}):(\d{2}):(\d{2})$/.exec(s);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}T${m[4].padStart(2, '0')}:${m[5]}:${m[6]}${TZ_OFFSET}`;
+  m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(s);
+  if (m && baseIso){
+    let iso = `${baseIso.slice(0, 10)}T${m[1].padStart(2, '0')}:${m[2]}:${m[3]}${TZ_OFFSET}`;
+    if (Date.parse(iso) < Date.parse(baseIso)) iso = new Date(Date.parse(iso) + 864e5).toISOString();
+    return iso;
+  }
+  return null;
+}
+const isDetail = v => typeof v === 'string' && /^\d+\.\d+$/.test(v);
+
+async function parseImgReport(file){
+  const sh = await readXlsx(file);
+  const need = ['Статистика', 'Поездки'];
+  for (const n of need) if (!sh[n]) throw new Error(`нет листа «${n}» — это не «Отчёт по поездкам» IMG`);
+  const stat = Object.fromEntries(sh['Статистика'].filter(r => r && r[0]).map(r => [String(r[0]).trim(), r[1]]));
+  const object = String(stat['Объект'] || '').trim();
+  const from = imgMoment(stat['Начало интервала']), to = imgMoment(stat['Конец интервала']);
+  if (!object || !from || !to) throw new Error('в листе «Статистика» нет объекта или периода');
+
+  const addr = new Map();   // начало поездки → [откуда, куда]
+  for (const r of sh['Хронология'] || []){
+    if (r && r[1] === 'Поездка' && r[2]) addr.set(String(r[2]).trim(), [r[3] || null, r[5] || null]);
+  }
+  const trips = [], bad = [];
+  let reportKm = null, reportTrips = null;
+  for (const r of sh['Поездки']){
+    if (!r) continue;
+    if (r[1] === 'Итого'){ reportKm = n(r[4]); reportTrips = n(r[8]); continue; }
+    if (!isDetail(r[0])) continue;
+    const s = imgMoment(r[1]), e = imgMoment(r[3], s), km = n(r[4]);
+    if (!s || !e || km === null){ bad.push(r[0]); continue; }
+    const [a, b] = addr.get(String(r[1]).trim()) || [null, null];
+    trips.push({ s, e, km, v:n(r[7]), a, b });
+  }
+  const gaps = [];
+  for (const r of sh['Потери связи'] || []){
+    if (!r || !isDetail(r[0])) continue;
+    const s = imgMoment(r[1]), e = imgMoment(r[3], s);
+    if (s && e) gaps.push({ s, e });
+  }
+  const km = trips.reduce((t, x) => t + x.km, 0);
+  return { object, from, to, trips, gaps, km, bad, reportKm, reportTrips,
+    noGapsSheet:!sh['Потери связи'], noChronoSheet:!sh['Хронология'],
+    /* разбор сошёлся с итогом самого отчёта — иначе что-то потеряли и писать нельзя */
+    matches:reportTrips !== null && reportTrips === trips.length && reportKm !== null && Math.abs(reportKm - km) < 0.05 };
+}
 
 /* ============ утилиты ============ */
 function h(tag, attrs, ...kids){
@@ -484,8 +651,9 @@ function table(cols, rows, opts){
   };
   const body = rows.map(r => {
     const sel = opts.selected ? opts.selected(r) : false;
-    const attrs = { class:[opts.onClick ? 'click' : '', sel ? 'sel' : ''].filter(Boolean).join(' ') || null };
-    if (opts.onClick){
+    const clickable = !!opts.onClick && (!opts.canClick || opts.canClick(r));
+    const attrs = { class:[clickable ? 'click' : '', sel ? 'sel' : ''].filter(Boolean).join(' ') || null };
+    if (clickable){
       attrs.tabindex = '0';
       attrs['aria-current'] = sel ? 'true' : null;
       attrs.onclick = () => opts.onClick(r);
@@ -525,6 +693,7 @@ function downloadCsv(name){
 
 /* ============ состояние ============ */
 let settings = {}, settingRows = [], rules = {}, routes = [], anomalies = [], syncLog = [];
+let aliasMap = new Map(), imgLoads = [], imgDraft = [], knownVehicles = null;
 let anomaliesByRoute = new Map(), loaded = null, openRoute = null, loadSeq = 0, detailSeq = 0;
 let cityFilter = '', sevFilter = 2;
 const cfg = k => n(settings[k]);
@@ -554,20 +723,28 @@ async function loadData(){
   $('btn-load').disabled = true;
   try {
     const range = `route_date=gte.${q(f.from)}&route_date=lte.${q(f.to)}` + (f.city ? `&city=eq.${q(f.city)}` : '');
-    const [s, ru, r, a, l] = await Promise.all([
+    const [s, ru, r, a, l, ri, al, il] = await Promise.all([
       api('settings?select=key,value,note&order=key'),
       api('anomaly_rules?select=code,title,description,sort&order=sort'),
       apiAll(`v_route_metrics?select=*&${range}&order=route_date.desc,city,courier_name,route_id`),
-      apiAll(`v_anomalies?select=*&${range}&order=severity,route_date.desc,route_id,code`),
+      apiAll(`v_anomalies?select=*&${range}&order=severity,route_date.desc,route_id,code,plate`),
       api('sync_log?select=*&order=id.desc&limit=200'),
+      apiAll(`v_route_img?select=*&${range}&order=route_date.desc,route_id`),
+      api('vehicle_aliases?select=alias_key,plate_key,note&order=alias_key'),
+      api('img_loads?select=*&order=id.desc&limit=300'),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
     settings = Object.fromEntries(s.map(x => [x.key, x.value]));
     rules = Object.fromEntries(ru.map(x => [x.code, x]));
-    routes = r; anomalies = a; syncLog = l;
+    /* IMG по маршруту — отдельным полем, а не правкой строки из базы */
+    const imgBy = new Map(ri.map(x => [x.route_id, x]));
+    routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null }));
+    anomalies = a; syncLog = l; imgLoads = il;
+    aliasMap = new Map(al.map(x => [x.alias_key, x.plate_key]));
     anomaliesByRoute = new Map();
     for (const x of anomalies){
+      if (!x.route_id) continue;   // A3 — день без маршрута, у него нет карточки
       if (!anomaliesByRoute.has(x.route_id)) anomaliesByRoute.set(x.route_id, []);
       anomaliesByRoute.get(x.route_id).push(x);
     }
@@ -619,7 +796,24 @@ function aggregate(rows, inStats){
     impossible:sum(st, r => r.impossible_legs), late:sum(st, r => r.late_closes),
     hours:median(st.map(r => n(r.work_hours))),
     an1:an.filter(x => x.severity === 1).length, an2:an.filter(x => x.severity === 2).length,
+    ...imgAggregate(st),
   };
+}
+/* IMG: только маршруты, по которым отчёт загружен и окно дня известно.
+   «Вне маршрута» — сумма превышений: где IMG насчитал меньше Dextra, это дыры трекера,
+   а не экономия, и вычитать их из чужих превышений нельзя. */
+function imgAggregate(st){
+  const withImg = st.filter(r => r.img && r.img.img_loaded && r.win_end);
+  return {
+    imgRoutes:withImg.length,
+    imgKm:withImg.length ? sum(withImg, r => r.img.img_km_window) : null,
+    outsideKm:withImg.length ? withImg.reduce((s, r) => s + Math.max(0, n(r.img.outside_km) || 0), 0) : null,
+  };
+}
+/* A3 — аномалия дня без маршрута: в счётчики города и водителя добавляется отдельно */
+function withUnrouted(agg, match){
+  const extra = anomalies.filter(a => !a.route_id && match(a));
+  return { ...agg, an1:agg.an1 + extra.filter(a => a.severity === 1).length, an2:agg.an2 + extra.filter(a => a.severity === 2).length };
 }
 function groupBy(rows, key){
   const m = new Map();
@@ -646,8 +840,8 @@ function kpiCard(value, label, tone){
 
 function renderSummary(){
   const inStats = statsFilter();
-  const total = aggregate(routes, inStats);
-  const byCity = [...groupBy(routes, r => r.city)].map(([city, rows]) => ({ key:cityName(city), ...aggregate(rows, inStats) }))
+  const total = withUnrouted(aggregate(routes, inStats), () => true);
+  let byCity = [...groupBy(routes, r => r.city)].map(([city, rows]) => ({ key:cityName(city), ...aggregate(rows, inStats) }))
     .sort((a, b) => byText(a.key, b.key));
   const covMin = cfg('a6_coverage_min');
   $('kpis').replaceChildren(
@@ -656,6 +850,7 @@ function renderSummary(){
     kpiCard(km(total.gps), 'Факт GPS Dextra, км'),
     kpiCard(pct(total.ratio), `Факт / план при покрытии ≥ ${covMin ?? '—'}%`),
     kpiCard(pct(total.closedShare), 'Точек закрыто'),
+    kpiCard(km(total.outsideKm), `Км вне маршрута по IMG (${int(total.imgRoutes)} маршр.)`, total.outsideKm > 0 ? 'warning' : null),
     kpiCard(int(total.an1) + ' / ' + int(total.an2), 'Аномалий: высоких / средних', total.an1 ? 'danger' : total.an2 ? 'warning' : 'success'),
   );
 
@@ -675,9 +870,13 @@ function renderSummary(){
     { t:'Невозм. переезды', v:r => r.impossible, num:true, f:int },
     { t:'Закрыто поздно', v:r => r.late, num:true, f:int },
     { t:'День, ч (медиана)', v:r => r.hours, num:true, f:v => v === null ? '—' : nf1.format(v) },
+    { t:'С IMG, маршр.', v:r => r.imgRoutes, num:true, f:int },
+    { t:'IMG в окне дня, км', v:r => r.imgKm, num:true, f:km },
+    { t:'Вне маршрута, км', v:r => r.outsideKm, num:true, f:km, bad:r => r.outsideKm > 0, title:() => 'сумма превышений IMG над Dextra в окне рабочего дня' },
     { t:'Аномалий выс. / сред.', v:r => r.an1 + ' / ' + r.an2, num:true },
   ];
-  const totalRow = { key:'Итого', ...total };
+  const totalRow = { key:'Итого', ...total };   // A3 в total уже учтены
+  byCity = byCity.map(x => withUnrouted(x, a => cityName(a.city) === x.key));
   put('tbl-sum', table(cols, byCity, { total:byCity.length > 1 ? totalRow : null }));
   csvTables.sum = { cols, rows:byCity.concat(byCity.length > 1 ? [totalRow] : []), file:fileName('svodka') };
 
@@ -693,7 +892,8 @@ function renderSummary(){
 function renderAnomalies(){
   const stable = $('f-stable').checked;
   const ids = new Set(routes.filter(r => !(stable && r.is_break_in)).map(r => r.route_id));
-  const rows = anomalies.filter(a => a.severity <= sevFilter && ids.has(a.route_id));
+  /* A3 (день без маршрута) не привязан к маршруту; обкатку для него база уже отсекла */
+  const rows = anomalies.filter(a => a.severity <= sevFilter && (!a.route_id || ids.has(a.route_id)));
   const cols = [
     { t:'Важность', v:r => SEV_NAMES[r.severity], f:(v, r) => chip(v, 'sev' + r.severity) },
     { t:'Дата', v:r => ruDate(r.route_date), mono:true },
@@ -703,7 +903,8 @@ function renderAnomalies(){
     { t:'Что', v:r => ruleTitle(r.code) },
     { t:'Подробно', v:r => r.message },
   ];
-  put('tbl-anom', table(cols, rows, { onClick:r => showRoute(r.route_id), empty:'Аномалий нет', emptyHint:'Или период целиком в обкатке.' }));
+  put('tbl-anom', table(cols, rows, { onClick:r => showRoute(r.route_id), canClick:r => !!r.route_id,
+    empty:'Аномалий нет', emptyHint:'Или период целиком в обкатке.' }));
   csvTables.anom = { cols, rows, file:fileName('anomalii') };
   put('tbl-anom-legend', table([
     { t:'Код', v:r => r.code, mono:true }, { t:'Правило', v:r => r.title }, { t:'Что значит', v:r => r.description },
@@ -715,7 +916,7 @@ function renderDrivers(){
   const covMin = cfg('a6_coverage_min');
   const a12 = cfg('a12_min_legs');
   const rows = [...groupBy(routes, r => r.courier_id || r.courier_name)].map(([, rs]) => {
-    const a = aggregate(rs, inStats);
+    const a = withUnrouted(aggregate(rs, inStats), x => x.courier_name === rs[0].courier_name);
     return { name:rs[0].courier_name, city:cityName(rs[0].city), plates:[...new Set(rs.map(r => r.plate).filter(Boolean))].join(', '), ...a };
   }).filter(r => r.routes > 0)
     .sort((x, y) => (y.an1 - x.an1) || (y.an2 - x.an2) || byText(x.name, y.name));
@@ -733,6 +934,7 @@ function renderDrivers(){
     { t:'Невозм. переезды', v:r => r.impossible, num:true, f:int, bad:r => a12 !== null && r.impossible >= a12 },
     { t:'Закрыто поздно', v:r => r.late, num:true, f:int, bad:r => r.late > 0 },
     { t:'День, ч', v:r => r.hours, num:true, f:v => v === null ? '—' : nf1.format(v) },
+    { t:'Вне маршрута, км', v:r => r.outsideKm, num:true, f:km, bad:r => r.outsideKm > 0, title:r => `по ${r.imgRoutes} маршрутам с отчётом IMG` },
     { t:'Аномалий выс. / сред.', v:r => r.an1 + ' / ' + r.an2, num:true },
   ];
   put('tbl-drv', table(cols, rows));
@@ -765,6 +967,9 @@ function renderRoutes(){
     { t:'Покрытие', v:r => n(r.coverage_pct), num:true, f:v => v === null ? '—' : int(v) + '%', bad:lowCov },
     { t:'Точки', v:r => `${r.closed}/${r.deliveries - r.cancelled}`, num:true },
     { t:'Окно дня', v:r => r.win_start && r.win_end ? `${tm(r.win_start, r.route_date)}–${tm(r.win_end, r.route_date)}` : '—', mono:true },
+    { t:'IMG в окне, км', v:r => r.img && r.img.img_loaded ? n(r.img.img_km_window) : null, num:true, f:km },
+    { t:'Вне маршрута, км', v:r => r.img && r.img.img_loaded && r.win_end ? n(r.img.outside_km) : null, num:true, f:km,
+      bad:r => !!(r.img && r.img.img_loaded && n(r.img.outside_km) > 0) },
     { t:'Флаги', v:r => routeFlags(r).map(x => x[0]).join(' '), f:(v, r) => flagNodes(routeFlags(r)) },
   ];
   put('tbl-rt', table(cols, routes, { onClick:r => showRoute(r.route_id), selected:r => r.route_id === openRoute }));
@@ -785,14 +990,40 @@ async function showRoute(routeId, opts){
   const box = $('route-detail');
   box.replaceChildren(emptyBox('Загружаю точки маршрута…'));
   try {
-    const acts = await api(`dx_actions?select=*&route_id=eq.${q(routeId)}&order=completed_at.asc.nullslast,planned_at.asc.nullslast,action_id`);
+    const [acts, trips] = await Promise.all([
+      api(`dx_actions?select=*&route_id=eq.${q(routeId)}&order=completed_at.asc.nullslast,planned_at.asc.nullslast,action_id`),
+      /* без поездок IMG карточка всё равно нужна — сбой здесь не прячет точки */
+      dayTrips(r).catch(e => ({ error:e.message })),
+    ]);
     if (seq !== detailSeq) return;
-    box.replaceChildren(...routeDetail(r, acts));
+    box.replaceChildren(...routeDetail(r, acts, trips));
     if (!(opts && opts.keepTab)) box.scrollIntoView({ behavior:'smooth', block:'start' });
   } catch(e){
     if (seq !== detailSeq) return;
     box.replaceChildren(h('p', { class:'msg err' }, 'Точки не загрузились: ' + e.message));
   }
+}
+
+/* Номер машины без кода региона, латиница — как public.plate_key() в базе */
+const LOOKALIKE_FROM = 'АВЕКМНОРСТУХ', LOOKALIKE_TO = 'ABEKMHOPCTYX';
+function plateKey(s){
+  const t = String(s || '').toUpperCase()
+    .replace(/[АВЕКМНОРСТУХ]/g, ch => LOOKALIKE_TO[LOOKALIKE_FROM.indexOf(ch)])
+    .replace(/[^0-9A-Z]/g, '');
+  const m = /([A-Z]\d{3}[A-Z]{2}|\d{3}[A-Z]{3})$/.exec(t);
+  return m ? m[1] : null;
+}
+const canonicalKey = k => aliasMap.get(k) || k;
+
+/* Поездки IMG за сутки маршрута — по номеру Dextra и всем старым номерам этой машины */
+async function dayTrips(r){
+  const key = plateKey(r.plate);
+  if (!key) return null;
+  const keys = [key, ...[...aliasMap].filter(([, to]) => to === key).map(([from]) => from)];
+  const from = `${r.route_date}T00:00:00${TZ_OFFSET}`;
+  const to = new Date(Date.parse(from) + 864e5).toISOString();
+  return api(`img_trips?select=started_at,ended_at,km,max_speed,start_addr,end_addr,plate_key` +
+    `&plate_key=in.(${keys.map(q).join(',')})&started_at=gte.${q(from)}&started_at=lt.${q(to)}&order=started_at`);
 }
 
 /* Флаги точки — те же правила, что в представлении v_route_metrics:
@@ -859,16 +1090,19 @@ function pointRows(r, acts){
   return rows.concat(rest);
 }
 
-function routeDetail(r, acts){
+function routeDetail(r, acts, trips){
   const covMin = cfg('a6_coverage_min');
   const lowCov = covMin !== null && (n(r.coverage_pct) === null || n(r.coverage_pct) < covMin);
+  const im = r.img && r.img.img_loaded ? r.img : null;
+  const outside = im && r.win_end ? n(im.outside_km) : null;
   const head = h('div', { class:'bar', style:'margin-top:8px' },
     h('h2', null, `${r.courier_name || 'Водитель не указан'} · ${cityName(r.city)} · ${ruDate(r.route_date)} · ${r.plate || 'без номера'}`),
     h('button', { class:'btn', onclick:closeRoute }, 'Закрыть'));
   const kp = h('div', { class:'kpis' },
     kpiCard(km(n(r.plan_km)), 'План Dextra, км'),
     kpiCard(km(n(r.gps_km)), 'Факт GPS Dextra, км'),
-    kpiCard('—', 'Факт IMG в окне дня, км (этап 3)'),
+    kpiCard(im ? km(n(im.img_km_window)) : '—', im ? `Факт IMG в окне дня, км (за сутки ${km(n(im.img_km_day))})` : 'Факт IMG — отчёт не загружен'),
+    kpiCard(outside === null ? '—' : km(outside), 'Км вне маршрута', outside > 0 ? 'danger' : null),
     kpiCard(n(r.coverage_pct) === null ? '—' : int(n(r.coverage_pct)) + '%', 'Покрытие GPS', lowCov ? 'danger' : null),
     kpiCard(`${r.closed}/${r.deliveries - r.cancelled}`, 'Точек закрыто', r.open > 0 ? 'warning' : null),
     kpiCard(r.win_start && r.win_end ? `${tm(r.win_start, r.route_date)}–${tm(r.win_end, r.route_date)}` : '—',
@@ -878,6 +1112,13 @@ function routeDetail(r, acts){
   if (r.is_break_in) notes.push('День в периоде обкатки Dextra — в статистику не идёт.');
   if (r.before_return_fix) notes.push('До исправления Dextra не считала обратную дорогу на склад: факт GPS занижен на возврат.');
   if (lowCov) notes.push(`Покрытие GPS ниже ${covMin}% — факт км недоказуем.`);
+  if (im){
+    notes.push(`Км вне маршрута = IMG в окне дня ${km(n(im.img_km_window))} − ${im.dextra_ref_is_plan ? 'план' : 'факт'} Dextra ${km(n(im.dextra_ref_km))}` +
+      (n(im.return_est_km) > 0 ? ` − ~${km(n(im.return_est_km))} км оценки дороги на склад` : '') + '.');
+    if (n(im.img_gap_min_window) > 0) notes.push(`Трекер IMG молчал в окне дня ${int(n(im.img_gap_min_window))} мин — IMG мог недосчитать.`);
+    if (outside !== null && outside < 0) notes.push('Отрицательное значение — IMG насчитал меньше Dextra: обычно это дыры трекера IMG; в итоги «вне маршрута» такие дни идут нулём.');
+    if (im.return_est_missing) notes.push('Оценку дороги на склад посчитать не из чего (нет координат склада или точек) — «вне маршрута» может быть завышено.');
+  }
   const an = anomaliesByRoute.get(r.route_id) || [];
   const anTbl = an.length ? h('div', { class:'tbl' }, table([
     { t:'Важность', v:x => SEV_NAMES[x.severity], f:(v, x) => chip(v, 'sev' + x.severity) },
@@ -903,11 +1144,173 @@ function routeDetail(r, acts){
     anTbl,
     h('p', { class:'note' }, 'Точки в порядке фактического закрытия; незакрытые и отменённые — в конце. «Переезд» и «скорость» — по прямой между плановыми координатами соседних закрытых точек.'),
     h('div', { class:'tbl' }, table(cols, pointRows(r, acts), { empty:'У маршрута нет точек доставки' })),
+    ...imgTripsBlock(r, trips),
   ].filter(Boolean);
+}
+
+/* Поездки IMG за сутки: что внутри окна рабочего дня — к маршруту, что вне — вечер */
+function imgTripsBlock(r, trips){
+  if (!trips) return [];
+  const title = h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, `Поездки по IMG за ${ruDate(r.route_date)}`));
+  if (trips.error) return [title, h('p', { class:'msg err' }, 'Поездки IMG не загрузились: ' + trips.error)];
+  const ws = r.win_start ? Date.parse(r.win_start) : null, we = r.win_end ? Date.parse(r.win_end) : null;
+  const hasWin = ws !== null && we !== null;
+  const inWin = t => hasWin && Date.parse(t.started_at) < we && Date.parse(t.ended_at) > ws;
+  const cols = [
+    { t:'Начало', v:t => tm(t.started_at, r.route_date), mono:true },
+    { t:'Конец', v:t => tm(t.ended_at, r.route_date), mono:true },
+    { t:'Км', v:t => n(t.km), num:true, f:km },
+    { t:'Макс., км/ч', v:t => n(t.max_speed), num:true, f:int },
+    { t:'Откуда', v:t => t.start_addr },
+    { t:'Куда', v:t => t.end_addr },
+    { t:'Окно дня', v:t => !hasWin ? '' : inWin(t) ? 'в окне' : 'вне окна',
+      f:(v, t) => !hasWin ? '—' : chip(v, inWin(t) ? 'info' : 'sev3') },
+  ];
+  return [title,
+    h('div', { class:'tbl' }, table(cols, trips, { empty:'Поездок IMG за этот день нет', emptyHint:'Отчёт IMG за эту дату не загружен или машина не ездила.' })),
+  ];
+}
+
+/* ============ загрузка отчётов IMG ============ */
+/* машины Dextra по ключу номера — чтобы в предпросмотре было видно, чей это файл */
+const IMG_MAX_FILES = 60;
+async function loadKnownVehicles(){
+  if (knownVehicles) return knownVehicles;
+  const epoch = authEpoch;
+  const rows = await api('dx_routes?select=plate,city,courier_name,route_date&order=route_date.desc&limit=5000');
+  const map = new Map();
+  for (const x of rows){ const k = plateKey(x.plate); if (k && !map.has(k)) map.set(k, x); }
+  if (epoch === authEpoch) knownVehicles = map;   // после выхода чужой список не запоминаем
+  return map;
+}
+
+/* Состояние файла в пачке: ready — можно писать; blocked — нельзя, причина в reason;
+   saving / saved / error — запись. */
+function draftOf(name, p, vehicles){
+  const key = plateKey(p.object);
+  const canon = key ? canonicalKey(key) : null;
+  const d = { name, p, key, canon, veh:canon ? vehicles.get(canon) || null : null, state:'ready', reason:'', result:'' };
+  if (!key) return { ...d, state:'blocked', reason:'номер машины не распознан' };
+  if (!p.matches) return { ...d, state:'blocked', reason:'разбор не сошёлся с итогом отчёта' };
+  /* база хранит одну поездку на момент начала — дубль сорвал бы сверку с итогом */
+  if (new Set(p.trips.map(t => Date.parse(t.s))).size !== p.trips.length)
+    return { ...d, state:'blocked', reason:'в отчёте две поездки с одним временем начала — выгрузите отчёт заново' };
+  /* пустой отчёт стёр бы уже загруженные поездки машины за этот период */
+  if (!p.trips.length) return { ...d, state:'blocked', reason:'в отчёте нет поездок — не записываю, чтобы не стереть загруженное' };
+  return d;
+}
+/* две выгрузки одной машины с пересекающимися периодами: вторая молча заменила бы первую */
+function blockOverlaps(list){
+  return list.map((d, i) => {
+    if (d.state !== 'ready') return d;
+    /* строгое сравнение: периоды встык (конец одного = начало другого) — не пересечение */
+    const clash = list.find((o, j) => j !== i && o.p && o.canon === d.canon &&
+      Date.parse(o.p.from) < Date.parse(d.p.to) && Date.parse(d.p.from) < Date.parse(o.p.to));
+    return clash ? { ...d, state:'blocked', reason:`та же машина, что в «${clash.name}», за пересекающийся период — оставьте один файл` } : d;
+  });
+}
+
+async function pickImgFiles(files){
+  const epoch = authEpoch;
+  if (files.length > IMG_MAX_FILES){ say('msg-img', `За раз — не больше ${IMG_MAX_FILES} файлов.`, 'err'); return; }
+  imgDraft = [];
+  renderImgPreview();
+  say('msg-img', `Разбираю файлов: ${files.length}…`, 'info');
+  $('img-write').disabled = true;
+  $('img-pick').disabled = true;   // второй выбор, пока идёт разбор, перепутал бы предпросмотр
+  try {
+    let vehicles = new Map();
+    try { vehicles = await loadKnownVehicles(); }
+    catch(e){ say('msg-img', 'Список машин Dextra не загрузился: ' + e.message, 'err'); }
+    const list = [];
+    for (const f of files){
+      try { list.push(draftOf(f.name, await parseImgReport(f), vehicles)); }
+      catch(e){ list.push({ name:f.name, p:null, state:'blocked', reason:e.message, result:'' }); }
+      if (epoch !== authEpoch) return;   // пока разбирали, пользователь вышел
+    }
+    imgDraft = blockOverlaps(list);
+  } finally {
+    if (epoch === authEpoch) $('img-pick').disabled = false;
+  }
+  const ok = imgDraft.filter(d => d.state === 'ready').length;
+  say('msg-img', `Разобрано: ${imgDraft.length}, готово к записи: ${ok}.` +
+    (ok < imgDraft.length ? ' Остальные не будут записаны — причина в таблице.' : ''), ok ? 'ok' : 'err');
+  $('img-write').disabled = ok === 0;
+  renderImgPreview();
+}
+
+const IMG_STATE = { ready:['ждёт записи', 'sev3'], blocked:['не будет записан', 'bad'], saving:['записываю…', 'warn'],
+  saved:['записан', 'info'], error:['ошибка', 'bad'] };
+function renderImgPreview(){
+  const cols = [
+    { t:'Файл', v:d => d.name },
+    { t:'Машина в IMG', v:d => d.p ? d.p.object : '—' },
+    { t:'Машина в Dextra', v:d => d.veh ? `${d.veh.plate} · ${cityName(d.veh.city)} · ${d.veh.courier_name || ''}` : '',
+      f:(v, d) => d.p ? (d.veh ? v + (d.canon !== d.key ? ` (в IMG старый номер ${d.key})` : '') : chip('нет в Dextra', 'warn')) : '—' },
+    { t:'Период', v:d => d.p ? `${dt(d.p.from)} — ${dt(d.p.to)}` : '—', mono:true },
+    { t:'Поездок', v:d => d.p ? d.p.trips.length : null, num:true, f:int },
+    { t:'Км', v:d => d.p ? d.p.km : null, num:true, f:km },
+    { t:'Потерь связи', v:d => d.p ? (d.p.noGapsSheet ? null : d.p.gaps.length) : null, num:true,
+      f:(v, d) => d.p && d.p.noGapsSheet ? 'нет листа' : int(v) },
+    { t:'Сверка с итогом отчёта', v:d => d.p ? (d.p.matches ? 'сошлось' : `не сошлось: в отчёте ${d.p.reportTrips ?? '—'} поездок, ${d.p.reportKm ?? '—'} км`) : '—',
+      f:(v, d) => d.p ? chip(v, d.p.matches ? 'info' : 'bad') : '—' },
+    { t:'Запись', v:d => [IMG_STATE[d.state][0], d.reason, d.result].filter(Boolean).join(': '),
+      f:(v, d) => h('span', null, chip(IMG_STATE[d.state][0], IMG_STATE[d.state][1]), d.reason || d.result ? ' ' + (d.reason || d.result) : '') },
+  ];
+  put('tbl-img-preview', table(cols, imgDraft, { empty:'Файлы не выбраны' }));
+}
+
+async function writeImg(){
+  const epoch = authEpoch;
+  const todo = imgDraft.filter(d => d.state === 'ready' || d.state === 'error');
+  if (!todo.length) return;
+  $('img-write').disabled = true; $('img-pick').disabled = true;
+  /* черновик пачки — локальное состояние экрана, его строки обновляются на месте */
+  const setState = (d, patch) => { Object.assign(d, patch); renderImgPreview(); };
+  let done = 0, failed = 0;
+  for (const d of todo){
+    if (epoch !== authEpoch) return;
+    setState(d, { state:'saving', result:'' });
+    try {
+      const res = await api('rpc/img_import', { method:'POST', body:{
+        p_object:d.p.object, p_from:d.p.from, p_to:d.p.to, p_file:d.name, p_trips:d.p.trips, p_gaps:d.p.gaps,
+        p_report_trips:d.p.reportTrips, p_report_km:d.p.reportKm } });
+      if (epoch !== authEpoch) return;
+      /* сервер сверяет с итогом сам, но и здесь число должно совпасть */
+      if (n(res.trips) !== d.p.trips.length) throw new Error(`база приняла ${res.trips} поездок из ${d.p.trips.length}`);
+      setState(d, { state:'saved', result:`${int(res.trips)} поездок, ${km(n(res.km))} км` });
+      done++;
+    } catch(e){
+      if (epoch !== authEpoch) return;
+      setState(d, { state:'error', result:e.message });
+      failed++;
+    }
+  }
+  $('img-pick').disabled = false;
+  $('img-write').disabled = !imgDraft.some(d => d.state === 'ready' || d.state === 'error');
+  say('msg-img', `Записано файлов: ${done}` + (failed ? `, с ошибкой: ${failed}` : '') + '. Пересчитываю показатели…', failed ? 'err' : 'info');
+  const ok = await loadData();
+  if (epoch !== authEpoch) return;
+  say('msg-img', `Записано файлов: ${done}` + (failed ? `, с ошибкой: ${failed} — причина в таблице` : '') +
+    (ok ? '. Показатели пересчитаны.' : '. Показатели не обновились — нажмите «Показать».'), failed || !ok ? 'err' : 'ok');
+}
+
+function renderImgLoads(){
+  const last = [...groupBy(imgLoads, x => canonicalKey(x.plate_key))].map(([, rows]) => rows[0])
+    .sort((a, b) => byText(a.plate_img, b.plate_img));
+  put('tbl-img-loads', table([
+    { t:'Машина в IMG', v:x => x.plate_img },
+    { t:'Период последней загрузки', v:x => `${dt(x.period_from)} — ${dt(x.period_to)}`, mono:true },
+    { t:'Поездок', v:x => n(x.trips), num:true, f:int },
+    { t:'Км', v:x => n(x.km), num:true, f:km },
+    { t:'Загружено', v:x => dt(x.loaded_at), mono:true },
+    { t:'Кем', v:x => x.loaded_by },
+  ], last, { empty:'Отчёты IMG ещё не загружались' }));
 }
 
 /* ============ загрузка данных и настройки ============ */
 function renderSync(){
+  renderImgLoads();
   const last = [...groupBy(syncLog, x => x.city)].map(([city, rows]) => {
     const ok = rows.find(x => x.status === 'ok');
     const err = rows.find(x => x.status === 'error');
@@ -1001,6 +1404,9 @@ async function signOut(reason){
   loadSeq++; detailSeq++;
   settings = {}; settingRows = []; rules = {}; routes = []; anomalies = []; syncLog = [];
   anomaliesByRoute = new Map(); loaded = null; openRoute = null;
+  aliasMap = new Map(); imgLoads = []; imgDraft = []; knownVehicles = null;
+  $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');
+  ['tbl-img-preview', 'tbl-img-loads'].forEach(id => $(id).replaceChildren());
   for (const k of Object.keys(csvTables)) delete csvTables[k];
   ['kpis', 'tbl-sum', 'tbl-anom', 'tbl-anom-legend', 'tbl-drv', 'tbl-rt', 'route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg']
     .forEach(id => $(id).replaceChildren());
@@ -1042,6 +1448,13 @@ $('f-sev').addEventListener('click', e => {
   try { renderAnomalies(); } catch(err){ say('msg', err.message, 'err'); }
 });
 document.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => downloadCsv(b.dataset.csv)));
+$('img-pick').addEventListener('click', () => $('img-files').click());
+$('img-files').addEventListener('change', e => {
+  const files = [...e.target.files];
+  e.target.value = '';   // тот же файл можно выбрать повторно
+  if (files.length) pickImgFiles(files);
+});
+$('img-write').addEventListener('click', writeImg);
 
 /* ============ старт ============ */
 (async function start(){

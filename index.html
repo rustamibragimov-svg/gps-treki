@@ -741,6 +741,11 @@ let openDay = null, detSort = 'date';   // раскрытая строка «д�
 let cpView = 'cp1', routeHost = 'det';  // какая КТ в разделе «Контрольные точки»; где открыта карточка маршрута
 const cfg = k => n(settings[k]);
 const ruleTitle = code => (rules[code] && rules[code].title) || code;
+/* аномалия словами: «Правило: подробности»; если подробности уже начинаются с названия — без повтора */
+function anomalyText(a){
+  const title = ruleTitle(a.code), msg = a.message || '';
+  return !msg ? title : msg.startsWith(title) ? msg : `${title}: ${msg}`;
+}
 
 function filters(){
   return { from:$('f-from').value, to:$('f-to').value, city:cityFilter, stable:$('f-stable').checked };
@@ -1086,7 +1091,8 @@ function renderCp(){
   const L = cpLabels();
   for (const b of $('f-cp').querySelectorAll('.pill')) b.textContent = `${CP_NAMES[b.dataset.cp]} · ${fails(b.dataset.cp).length}`;
   const rows = fails(cpView).sort((a, b) => byText(b.route_date, a.route_date) || byText(cityName(a.city), cityName(b.city)) || byText(a.courier_name, b.courier_name));
-  const anCodes = r => (anomaliesByRoute.get(r.route_id) || []).map(a => a.code).join(' ');
+  /* в выгрузку — словами (правило и подробности), на экране — коды с подсказкой */
+  const anText = r => (anomaliesByRoute.get(r.route_id) || []).map(anomalyText).join('; ');
   const cols = [
     { t:'Дата', v:r => ruDate(r.route_date), mono:true },
     { t:'Город', v:r => cityName(r.city) },
@@ -1094,8 +1100,9 @@ function renderCp(){
     { t:'Машина', v:r => r.plate, mono:true },
     { t:'Что не так', v:r => cpWhy(r, cpView), wide:true },
     ...CP_COLS[cpView],
-    { t:'Аномалии маршрута', v:anCodes, f:(v, r) => (anomaliesByRoute.get(r.route_id) || [])
-        .map(a => h('span', { class:'chip ' + (a.severity === 1 ? 'bad' : a.severity === 2 ? 'warn' : 'sev3'), title:a.message }, a.code)) },
+    { t:'Аномалии маршрута', v:anText, f:(v, r) => (anomaliesByRoute.get(r.route_id) || [])
+        .map(a => h('span', { class:'chip ' + (a.severity === 1 ? 'bad' : a.severity === 2 ? 'warn' : 'sev3'),
+          title:anomalyText(a) }, a.code)) },
   ];
   put('tbl-cp', table(cols, rows, { onClick:r => showRoute(r.route_id, { host:'cp' }), rowKey:r => r.route_id,
     selected:r => r.route_id === openRoute && routeHost === 'cp',

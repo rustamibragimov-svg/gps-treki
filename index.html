@@ -325,8 +325,8 @@ const DEFAULT_DAYS = 14;
 const CITY_NAMES = { FERGHANA:'Фергана', KOKAND:'Коканд', NAMANGAN:'Наманган', ANDIJAN:'Андижан' };
 const SEV_NAMES  = { 1:'высокая', 2:'средняя', 3:'инфо' };
 /* без них часть проверок молча выключится — страница говорит об этом вслух */
-const REQUIRED_SETTINGS = ['a6_coverage_min', 'a7_quick_close_sec', 'a8_batch_points', 'a9_idle_min',
-  'a11_ratio_min', 'a12_min_km', 'a12_min_legs', 'a12_speed_kmh', 'day_end_ceiling', 'day_start_floor',
+const REQUIRED_SETTINGS = ['low_gps_coverage_min', 'quick_close_sec', 'batch_points', 'idle_min',
+  'overrun_ratio_min', 'leg_min_km', 'leg_min_count', 'leg_speed_kmh', 'day_end_ceiling', 'day_start_floor',
   'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to',
   'cp1_ratio_max', 'cp2_coverage_min', 'cp3_diff_km', 'cp3_diff_share', 'cp4_outside_km'];
 /* контрольные точки маршрута (статусы считает v_route_checks): символ, класс, словом */
@@ -1216,8 +1216,8 @@ function pointRows(r, acts){
   const minuteOf = a => Math.floor(t(a.completed_at) / 60000);
   const perMinute = groupBy(closed, minuteOf);
   const ceilingAt = localMoment(r.route_date, settings.day_end_ceiling);
-  const quick = cfg('a7_quick_close_sec'), batch = cfg('a8_batch_points'), idleMin = cfg('a9_idle_min');
-  const speedMax = cfg('a12_speed_kmh'), minKm = cfg('a12_min_km');
+  const quick = cfg('quick_close_sec'), batch = cfg('batch_points'), idleMin = cfg('idle_min');
+  const speedMax = cfg('leg_speed_kmh'), minKm = cfg('leg_min_km');
   const inDay = a => !ceilingAt || t(a.completed_at) <= ceilingAt.getTime();
   /* максимальный номер в плане среди точек, закрытых строго раньше данного момента */
   const maxRankBefore = new Map();
@@ -1288,6 +1288,7 @@ function routeDetail(r, acts, trips){
   const notes = [];
   if (r.is_break_in) notes.push('День в периоде обкатки Dextra — в статистику не идёт.');
   if (r.is_day_off) notes.push('Выходной день (воскресенье или суббота вне высокого сезона) — в статистику и аномалии не идёт.');
+  if (r.is_void) notes.push(`Ни одной закрытой точки из ${r.deliveries} — день не идёт в статистику.`);
   if (r.before_return_fix) notes.push('До исправления Dextra не считала обратную дорогу на склад: факт меньше плана на возврат. Сверка с IMG честная — окно маршрута тоже кончается на последней точке.');
   if (lowCov) notes.push(`Покрытие GPS ниже ${covMin}% — телефон водителя терял связь; факт км при этом верен.`);
   if (im){

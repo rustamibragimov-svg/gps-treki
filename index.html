@@ -6,7 +6,7 @@
      Скрипт и стили внутри файла, отсюда 'unsafe-inline'; connect-src — только база,
      шрифты — только Google Fonts. Правила и пороги аномалий в исходник не зашиты:
      они приходят из базы после входа. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src https://zbqjblrnbnsutpbtmqdi.supabase.co; form-action 'self'; base-uri 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js; style-src 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css; font-src https://fonts.gstatic.com; img-src data: https://tile.openstreetmap.org; connect-src https://zbqjblrnbnsutpbtmqdi.supabase.co; form-action 'self'; base-uri 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- шрифты с Google: адрес страницы туда не уходит -->
 <meta name="referrer" content="no-referrer">
@@ -161,6 +161,35 @@
   .empty b{display:block;font-size:14px;font-weight:500;margin-bottom:2px}
   .empty span{font-size:12px;color:var(--muted-fg)}
 
+  /* ---------- карта маршрута ---------- */
+  .map{height:480px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-card);overflow:hidden;
+    isolation:isolate;margin-bottom:8px;font-family:var(--sans)}
+  .map-wait{padding:16px;margin:0}
+  .map-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted-fg);margin-right:auto}
+  .map-legend span{display:inline-flex;align-items:center;gap:6px}
+  .map-opt{font-size:12px;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+  .lg{display:inline-block;flex:none}
+  .lg.plan{width:18px;border-top:3px dashed #2563EB}
+  .lg.img{width:18px;border-top:3px solid #EA580C}
+  .lg.pt{width:12px;height:12px;border-radius:50%}
+  .lg.depot{width:12px;height:12px;border-radius:3px;background:var(--side)}
+  .lg.far{width:16px;height:12px;border-radius:3px;background:#DC2626}
+  .lg.near{width:10px;height:10px;border-radius:50%;border:2px solid #EA580C;background:#fff}
+  .lg.pt.closed,.map-pt.closed{background:#16A34A}
+  .lg.pt.open,.map-pt.open{background:#DC2626}
+  .lg.pt.cancelled,.map-pt.cancelled{background:#94A3B8}
+  /* .leaflet-marker-icon в составе — стили Leaflet подключаются позже и иначе перебьют display */
+  .leaflet-marker-icon.map-pt,.leaflet-marker-icon.map-depot,.leaflet-marker-icon.map-stop{display:flex;align-items:center;
+    justify-content:center;box-sizing:border-box;color:#fff;font:600 11px/1 var(--mono);box-shadow:0 1px 3px rgba(0,0,0,.35)}
+  .map-pt{border-radius:50%;border:2px solid #fff}
+  .map-pt.away{border-color:#DC2626;box-shadow:0 0 0 2px #fff,0 1px 4px rgba(0,0,0,.4)}
+  .lg.pt.away{box-shadow:0 0 0 2px #DC2626}
+  .map-depot{border-radius:4px;border:2px solid #fff;background:var(--side)}
+  .map-stop{border-radius:4px;background:#DC2626}
+  .map-stop span::before{content:"P ";opacity:.85}
+  .map-tip{font:12px/1.4 var(--sans);max-width:320px;white-space:normal}
+  .map-tip div:first-child{font-weight:600}
+
   /* ---------- телефон: навигация снизу ---------- */
   @media (max-width:768px){
     .shell{flex-direction:column-reverse}
@@ -176,6 +205,7 @@
     .kpis{grid-template-columns:1fr 1fr;gap:8px}
     .kpi{padding:10px 12px}
     .kpi b{font-size:18px}
+    .map{height:360px}
   }
 </style>
 </head>
@@ -328,7 +358,8 @@ const SEV_NAMES  = { 1:'высокая', 2:'средняя', 3:'инфо' };
 const REQUIRED_SETTINGS = ['low_gps_coverage_min', 'quick_close_sec', 'batch_points', 'idle_min',
   'overrun_ratio_min', 'leg_min_km', 'leg_min_count', 'leg_speed_kmh', 'day_end_ceiling', 'day_start_floor',
   'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to',
-  'cp1_ratio_max', 'cp2_coverage_min', 'cp3_diff_km', 'cp3_diff_share', 'cp4_outside_km'];
+  'cp1_ratio_max', 'cp2_coverage_min', 'cp3_diff_km', 'cp3_diff_share', 'cp4_outside_km',
+  'map_stop_min', 'map_stop_far_m', 'map_close_far_m'];
 /* контрольные точки маршрута (статусы считает v_route_checks): символ, класс, словом */
 const CP_KEYS = ['cp1', 'cp2', 'cp3', 'cp4'];
 const CP_STATE = { ok:['✓', 'ok', 'норма'], fail:['✗', 'fail', 'нарушение'], na:['–', 'na', 'проверить нельзя'] };
@@ -483,7 +514,13 @@ async function readZip(buf){
     entries.set(name, { method, data:u8.subarray(start, start + size) });
     p += 46 + nLen + xLen + cLen;
   }
-  return async name => {
+  /* каждая часть распаковывается один раз: тысяча листов на одну и ту же часть не размножит 80 МБ */
+  const unpacked = new Map();
+  return name => {
+    if (!unpacked.has(name)) unpacked.set(name, unpack(name));
+    return unpacked.get(name);
+  };
+  async function unpack(name){
     const e = entries.get(name);
     if (!e) return null;
     if (e.method === 0) return dec.decode(e.data);
@@ -500,12 +537,13 @@ async function readZip(buf){
       parts.push(value);
     }
     return dec.decode(await new Blob(parts).arrayBuffer());
-  };
+  }
 }
 const xmlText = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
   .replace(/&#(\d+);/g, (m, c) => String.fromCodePoint(Number(c))).replace(/&amp;/g, '&');
 const colIndex = ref => { let n = 0; for (const ch of ref.replace(/\d+/g, '')) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
-/* { имя листа → массив строк (массивы значений) } */
+/* { sheets: имя листа → массив строк (массивы значений),
+     links: имя листа → Map «строка:столбец» (индексы в sheets) → адрес ссылки ячейки } */
 async function readXlsx(file){
   if (file.size > XLSX_MAX_BYTES) throw new Error(`файл больше ${XLSX_MAX_BYTES / 1e6} МБ — это не отчёт IMG`);
   try { return await readXlsxUnchecked(file); }
@@ -520,29 +558,30 @@ async function readXlsxUnchecked(file){
   if (!wb || !rels) throw new Error('в файле нет листов Excel');
   const shared = [];
   const ss = await get('xl/sharedStrings.xml');
-  if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)){
-    shared.push(xmlText([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(t => t[1]).join('')));
-  }
-  const target = Object.fromEntries([...rels.matchAll(/<Relationship\b[^>]*>/g)].map(m => [
+  if (ss) for (const si of xmlElements(ss, 'si')) shared.push(xmlTexts(si.body));
+  const target = Object.fromEntries([...rels.matchAll(/<Relationship\b[^<>]*>/g)].map(m => [
     (/Id="([^"]+)"/.exec(m[0]) || [])[1], (/Target="([^"]+)"/.exec(m[0]) || [])[1]]));
   const sheets = Object.create(null);   // имя листа «__proto__» не должно трогать прототип
-  for (const m of wb.matchAll(/<sheet\b[^>]*>/g)){
+  const links = Object.create(null);
+  for (const m of wb.matchAll(/<sheet\b[^<>]*>/g)){
     const name = xmlText((/name="([^"]*)"/.exec(m[0]) || [])[1] || '');
     const rid = (/r:id="([^"]+)"/.exec(m[0]) || [])[1];
     const path = (target[rid] || '').replace(/^\/?(xl\/)?/, 'xl/');
     const xml = await get(path);
     if (!xml) continue;
-    const rows = [];
-    for (const r of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)){
+    const rows = [], rowAt = new Map();   // номер строки Excel → индекс в rows
+    for (const r of xmlElements(xml, 'row')){
+      const num = Number((/\br="(\d+)"/.exec(r.attrs) || [])[1]);
+      if (num) rowAt.set(num, rows.length);
       const row = [];
-      for (const c of r[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)){
-        const ref = (/r="([A-Z]+\d+)"/.exec(c[1]) || [])[1];
-        const type = (/t="([^"]+)"/.exec(c[1]) || [])[1];
-        const body = c[2] || '';
-        const v = (/<v>([\s\S]*?)<\/v>/.exec(body) || [])[1];
+      for (const c of xmlElements(r.body, 'c')){
+        const ref = (/\br="([A-Z]+\d+)"/.exec(c.attrs) || [])[1];
+        const type = (/\bt="([^"]+)"/.exec(c.attrs) || [])[1];
+        const body = c.body;
+        const v = xmlFirst(body, 'v');
         let val = null;
         if (type === 's') val = shared[Number(v)] ?? null;
-        else if (type === 'inlineStr') val = xmlText([...body.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(t => t[1]).join(''));
+        else if (type === 'inlineStr') val = xmlTexts(body);
         else if (type === 'str' || type === 'e') val = v === undefined ? null : xmlText(v);
         else if (type === 'b') val = v === '1';
         else if (v !== undefined) val = Number(v);
@@ -551,8 +590,49 @@ async function readXlsxUnchecked(file){
       rows.push(row);
     }
     sheets[name] = rows;
+    links[name] = await sheetLinks(get, path, xml, rowAt);
   }
-  return sheets;
+  return { sheets, links };
+}
+/* Элементы <tag …>…</tag> и пустые <tag …/> — поиском indexOf, а не регуляркой: на подложенном
+   файле без закрывающих тегов ленивый [\s\S]*? работает квадратично и вешает вкладку.
+   Вложенных одноимённых элементов в нужных частях xlsx нет. */
+function* xmlElements(xml, tag){
+  const open = '<' + tag, close = '</' + tag + '>';
+  for (let pos = 0;;){
+    const at = xml.indexOf(open, pos);
+    if (at < 0) return;
+    const gt = xml.indexOf('>', at);
+    if (gt < 0) return;
+    if (!/[\s/>]/.test(xml[at + open.length])){ pos = at + open.length; continue; }   // <rowBreaks>, <col> и т. п.
+    const attrs = xml.slice(at + open.length, gt);
+    if (attrs.endsWith('/')){ yield { attrs, body:'', empty:true }; pos = gt + 1; continue; }
+    const end = xml.indexOf(close, gt);
+    if (end < 0) return;
+    yield { attrs, body:xml.slice(gt + 1, end) };
+    pos = end + close.length;
+  }
+}
+/* <v/> — значения нет (undefined), <v></v> — пустая строка: как было при разборе регуляркой */
+const xmlFirst = (xml, tag) => { for (const e of xmlElements(xml, tag)) return e.empty ? undefined : e.body; return undefined; };
+/* текст строки: все <t> подряд (у строки с оформлением их несколько) */
+const xmlTexts = xml => xmlText([...xmlElements(xml, 't')].map(e => e.body).join(''));
+/* Ссылки ячеек: <hyperlink ref="C868" r:id="rId1"/> в листе, адрес — в _rels листа */
+async function sheetLinks(get, path, xml, rowAt){
+  const out = new Map();
+  const tags = [...xml.matchAll(/<hyperlink\b[^<>]*>/g)].map(m => m[0]);
+  if (!tags.length) return out;
+  const rels = await get(path.replace(/([^/]+)$/, '_rels/$1.rels'));
+  if (!rels) return out;
+  const target = new Map([...rels.matchAll(/<Relationship\b[^<>]*>/g)].map(m => [
+    (/Id="([^"]+)"/.exec(m[0]) || [])[1], xmlText((/Target="([^"]+)"/.exec(m[0]) || [])[1] || '')]));
+  for (const t of tags){
+    const ref = (/\bref="([A-Z]+)(\d+)"/.exec(t) || []);
+    const url = target.get((/r:id="([^"]+)"/.exec(t) || [])[1]);
+    const row = rowAt.get(Number(ref[2]));
+    if (url && row !== undefined) out.set(`${row}:${colIndex(ref[1])}`, url);
+  }
+  return out;
 }
 
 /* ============ отчёт IMG «Отчёт по поездкам» ============ */
@@ -571,9 +651,17 @@ function imgMoment(text, baseIso){
   return null;
 }
 const isDetail = v => typeof v === 'string' && /^\d+\.\d+$/.test(v);
+/* ссылка IMG на место: https://www.google.com/maps?q=40.39615,71.74925 → ['40.39615', '71.74925'];
+   строкой, как в отчёте, — база сама проверит формат и диапазон */
+const MAPS_LINK = /^https:\/\/www\.google\.com\/maps\?q=(-?\d{1,3}\.\d{1,8}),(-?\d{1,3}\.\d{1,8})$/;
+function mapsPoint(url){
+  const m = MAPS_LINK.exec(url || '');
+  return m && Math.abs(Number(m[1])) <= 90 && Math.abs(Number(m[2])) <= 180 ? [m[1], m[2]] : [null, null];
+}
 
 async function parseImgReport(file){
-  const sh = await readXlsx(file);
+  const { sheets:sh, links } = await readXlsx(file);
+  const tripLinks = links['Поездки'] || new Map();
   const need = ['Статистика', 'Поездки'];
   for (const n of need) if (!sh[n]) throw new Error(`нет листа «${n}» — это не «Отчёт по поездкам» IMG`);
   const stat = Object.fromEntries(sh['Статистика'].filter(r => r && r[0]).map(r => [String(r[0]).trim(), r[1]]));
@@ -587,14 +675,16 @@ async function parseImgReport(file){
   }
   const trips = [], bad = [];
   let reportKm = null, reportTrips = null;
-  for (const r of sh['Поездки']){
+  for (const [i, r] of sh['Поездки'].entries()){
     if (!r) continue;
     if (r[1] === 'Итого'){ reportKm = n(r[4]); reportTrips = n(r[8]); continue; }
     if (!isDetail(r[0])) continue;
     const s = imgMoment(r[1]), e = imgMoment(r[3], s), km = n(r[4]);
     if (!s || !e || km === null){ bad.push(r[0]); continue; }
     const [a, b] = addr.get(String(r[1]).trim()) || [null, null];
-    trips.push({ s, e, km, v:n(r[7]), a, b });
+    /* координаты начала и конца — ссылки в ячейках «Начало» (C) и «Конец» (D) */
+    const [slat, slng] = mapsPoint(tripLinks.get(`${i}:2`)), [elat, elng] = mapsPoint(tripLinks.get(`${i}:3`));
+    trips.push({ s, e, km, v:n(r[7]), a, b, slat, slng, elat, elng });
   }
   const gaps = [];
   for (const r of sh['Потери связи'] || []){
@@ -803,7 +893,7 @@ async function loadData(){
       anomaliesByRoute.get(x.route_id).push(x);
     }
     loaded = { from:f.from, to:f.to, city:f.city };
-    if (openRoute && !routes.some(x => x.route_id === openRoute)) openRoute = null;
+    if (openRoute && !routes.some(x => x.route_id === openRoute)){ openRoute = null; detailSeq++; dropRouteMap(); }
     /* настройки видны любому из белого списка; пустые — значит, почты в списке нет */
     const missing = REQUIRED_SETTINGS.filter(k => settings[k] === undefined);
     if (!s.length) say('msg', 'Вход выполнен, но доступ к данным не выдан: ваша почта не в белом списке. Обратитесь к администратору.', 'info');
@@ -1143,7 +1233,7 @@ function renderCp(){
 }
 
 /* ============ один маршрут ============ */
-function closeRoute(){ openRoute = null; detailSeq++; renderDetail(); renderCp(); }
+function closeRoute(){ openRoute = null; detailSeq++; dropRouteMap(); renderDetail(); renderCp(); }
 
 /* opts.host: 'det' — карточка в Детализации (по умолчанию), 'cp' — в «Контрольных точках»;
    opts.keepTab — перезагрузка данных: вкладку и раскрытие строк не трогать */
@@ -1158,9 +1248,10 @@ async function showRoute(routeId, opts){
   if (!keepTab) selectTab(inCp ? 't-cp' : 't-det');
   renderDetail(); renderCp();
   const box = $(inCp ? 'cp-route-detail' : 'route-detail');
-  if (!r){ box.replaceChildren(); return; }
+  if (!r){ dropRouteMap(); box.replaceChildren(); return; }
   if (!keepTab) refocus(inCp ? 'tbl-cp' : 'tbl-det', routeId);
   const seq = ++detailSeq;
+  dropRouteMap();   // блок прежней карты сейчас уйдёт со страницы
   box.replaceChildren(emptyBox('Загружаю точки маршрута…'));
   try {
     const [acts, trips] = await Promise.all([
@@ -1169,7 +1260,10 @@ async function showRoute(routeId, opts){
       dayTrips(r).catch(e => ({ error:e.message })),
     ]);
     if (seq !== detailSeq) return;
-    box.replaceChildren(...routeDetail(r, acts, trips));
+    const points = pointRows(r, acts);
+    const map = safeRouteMapBlock(r, points, acts, trips);
+    box.replaceChildren(...routeDetail(r, points, trips, map.nodes));
+    map.mount(seq);
     if (!(opts && opts.keepTab)) box.scrollIntoView({ behavior:'smooth', block:'start' });
   } catch(e){
     if (seq !== detailSeq) return;
@@ -1195,7 +1289,7 @@ async function dayTrips(r){
   const keys = [key, ...[...aliasMap].filter(([, to]) => to === key).map(([from]) => from)];
   const from = `${r.route_date}T00:00:00${TZ_OFFSET}`;
   const to = new Date(Date.parse(from) + 864e5).toISOString();
-  return api(`img_trips?select=started_at,ended_at,km,max_speed,start_addr,end_addr,plate_key` +
+  return api(`img_trips?select=started_at,ended_at,km,max_speed,start_addr,end_addr,plate_key,start_lat,start_lng,end_lat,end_lng` +
     `&plate_key=in.(${keys.map(q).join(',')})&started_at=gte.${q(from)}&started_at=lt.${q(to)}&order=started_at`);
 }
 
@@ -1263,7 +1357,7 @@ function pointRows(r, acts){
   return rows.concat(rest);
 }
 
-function routeDetail(r, acts, trips){
+function routeDetail(r, points, trips, mapNodes){
   const covMin = cfg('cp2_coverage_min');
   const lowCov = covMin !== null && (n(r.coverage_pct) === null || n(r.coverage_pct) < covMin);
   const im = r.img && r.img.img_loaded ? r.img : null;
@@ -1319,8 +1413,9 @@ function routeDetail(r, acts, trips){
   return [head, cps, kp,
     notes.length ? h('p', { class:'msg info' }, notes.join(' ')) : null,
     anTbl,
+    ...mapNodes,
     h('p', { class:'note' }, 'Точки в порядке фактического закрытия; незакрытые и отменённые — в конце. «Переезд» и «скорость» — по прямой между плановыми координатами соседних закрытых точек.'),
-    h('div', { class:'tbl' }, table(cols, pointRows(r, acts), { empty:'У маршрута нет точек доставки' })),
+    h('div', { class:'tbl' }, table(cols, points, { empty:'У маршрута нет точек доставки' })),
     ...imgTripsBlock(r, trips),
   ].filter(Boolean);
 }
@@ -1330,9 +1425,9 @@ function imgTripsBlock(r, trips){
   if (!trips) return [];
   const title = h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, `Поездки по IMG за ${ruDate(r.route_date)}`));
   if (trips.error) return [title, h('p', { class:'msg err' }, 'Поездки IMG не загрузились: ' + trips.error)];
-  const ws = r.win_start ? Date.parse(r.win_start) : null, we = r.win_end ? Date.parse(r.win_end) : null;
+  const ws = msOf(r.win_start), we = msOf(r.win_end);
   const hasWin = ws !== null && we !== null;
-  const inWin = t => hasWin && Date.parse(t.started_at) < we && Date.parse(t.ended_at) > ws;
+  const inWin = t => hasWin && tripInWindow(t, ws, we);
   const cols = [
     { t:'Начало', v:t => tm(t.started_at, r.route_date), mono:true },
     { t:'Конец', v:t => tm(t.ended_at, r.route_date), mono:true },
@@ -1346,6 +1441,287 @@ function imgTripsBlock(r, trips){
   return [title,
     h('div', { class:'tbl' }, table(cols, trips, { empty:'Поездок IMG за этот день нет', emptyHint:'Отчёт IMG за эту дату не загружен или машина не ездила.' })),
   ];
+}
+
+/* ============ карта маршрута: план Dextra против пути машины по IMG ============ */
+/* Leaflet грузится с cdnjs, только когда открыта карточка маршрута. Подпись SRI (integrity)
+   не даёт подменить файл на CDN: другой чужой код на страницу с токенами входа не попадёт.
+   У IMG трека по дорогам нет — поездка рисуется отрезком «откуда → куда», место между
+   концом одной поездки и началом следующей — стоянка. */
+const LEAFLET_JS  = { url:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js',
+  sri:'sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg==' };
+const LEAFLET_CSS = { url:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css',
+  sri:'sha512-Zcn6bjR/8RZbLEpLIeOwNtzREBAJnUKESxces60Mpoj+2okopSAcSUIUOseddDm0cxnGQzxIR7vJgsLZbdLE3w==' };
+const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+/* цвета линий Leaflet задаются атрибутами SVG — var(--…) там не работает */
+const MAP_COLOR = { plan:'#2563EB', img:'#EA580C', imgOut:'#94A3B8' };
+const MAP_DEFAULT_VIEW = [40.7, 71.3];   // Ферганская долина — если рисовать нечего
+let leafletReady = null, leafletLoaded = false;   // loaded — и скрипт, и стили: без стилей карта рассыпается
+let routeMap = null;   // { map, fit } — открытая карта и «уложить в кадр, когда блок виден»
+
+function loadLeaflet(){
+  if (leafletLoaded) return Promise.resolve(window.L);
+  if (!leafletReady) leafletReady = new Promise((resolve, reject) => {
+    const css = h('link', { rel:'stylesheet', href:LEAFLET_CSS.url, integrity:LEAFLET_CSS.sri, crossorigin:'anonymous', referrerpolicy:'no-referrer' });
+    const js = h('script', { src:LEAFLET_JS.url, integrity:LEAFLET_JS.sri, crossorigin:'anonymous', referrerpolicy:'no-referrer' });
+    /* сбой — убрать теги и забыть обещание: следующая карточка попробует снова */
+    const fail = text => { leafletReady = null; css.remove(); js.remove(); reject(new Error(text)); };
+    const cssReady = new Promise((ok, bad) => { css.onload = ok; css.onerror = bad; });
+    const jsReady = new Promise((ok, bad) => { js.onload = ok; js.onerror = bad; });
+    Promise.all([cssReady, jsReady]).then(
+      () => { if (!window.L) return fail('библиотека карты не запустилась'); leafletLoaded = true; resolve(window.L); },
+      () => fail('библиотека карты не загрузилась с cdnjs.cloudflare.com — проверьте интернет'));
+    document.head.append(css, js);
+  });
+  return leafletReady;
+}
+/* ссылка снимается до remove(): даже сбой Leaflet не оставит полкарты и не прервёт выход */
+function dropRouteMap(){
+  const open = routeMap;
+  routeMap = null;
+  if (open) open.map.remove();
+}
+
+/* координаты точки; 0,0 — «нет спутников», а не место */
+function latLng(lat, lng){
+  const y = n(lat), x = n(lng);
+  if (y === null || x === null || Math.abs(y) > 90 || Math.abs(x) > 180 || (y === 0 && x === 0)) return null;
+  return { lat:y, lng:x };
+}
+const msOf = iso => { const v = iso ? Date.parse(iso) : NaN; return Number.isFinite(v) ? v : null; };
+/* поездка IMG пересекается с окном дня [ws, we) */
+const tripInWindow = (t, ws, we) => Date.parse(t.started_at) < we && Date.parse(t.ended_at) > ws;
+/* у части поездок нет ссылки на начало — машина стояла там, где кончилась прошлая поездка */
+const tripFrom = (t, prev) => latLng(t.start_lat, t.start_lng) || (prev ? latLng(prev.end_lat, prev.end_lng) : null);
+
+/* Слои карты — чистые данные, без Leaflet */
+function routeMapData(r, points, acts, trips){
+  const state = a => a.status === 'completed' ? 'closed' : a.status === 'cancelled' ? 'cancelled' : 'open';
+  const list = Array.isArray(trips) ? trips : [];
+  const farM = cfg('map_stop_far_m'), closeFarM = cfg('map_close_far_m'), stopMin = cfg('map_stop_min');
+  /* carM — где была машина по IMG, когда водитель закрыл точку; null — проверить нечем */
+  const plan = points.map(p => ({ ...latLng(p.a.lat, p.a.lng), row:p, state:state(p.a) })).filter(p => p.lat !== undefined)
+    .map(p => {
+      const closedAt = msOf(p.row.a.completed_at);
+      const at = closedAt !== null ? imgPositionAt(list, closedAt) : null;
+      const carM = at ? haversineKm(at, p) * 1000 : null;
+      return { ...p, closedAt, carM, carAway:carM !== null && closeFarM !== null && carM > closeFarM };
+    });
+  const depot = acts.filter(a => a.type === 'start' || a.type === 'end')
+    .map(a => ({ ...latLng(a.lat, a.lng), a })).filter(p => p.lat !== undefined);
+  const start = depot.find(p => p.a.type === 'start'), end = depot.find(p => p.a.type === 'end');
+  /* план Dextra: склад → точки по номеру в плане → склад; отменённые и добавленные после оптимизации — без линии */
+  const ordered = plan.filter(p => p.row.planNo !== null && p.state !== 'cancelled')
+    .sort((x, y) => (x.row.planNo - y.row.planNo) || byText(x.row.a.action_id, y.row.a.action_id));
+  const planLine = [start, ...ordered, end].filter(Boolean).map(p => [p.lat, p.lng]);
+
+  const ws = msOf(r.win_start), we = msOf(r.win_end);
+  const hasWin = ws !== null && we !== null;
+  const segs = list.map((t, i) => ({ from:tripFrom(t, list[i - 1]), to:latLng(t.end_lat, t.end_lng), t,
+    inWin:!hasWin || tripInWindow(t, ws, we) })).filter(s => s.from && s.to);
+
+  const stopsConfigured = stopMin !== null && farM !== null;
+  const targets = plan.filter(p => p.state !== 'cancelled').concat(depot);
+  const stops = stopsConfigured && segs.length ? findStops(list, hasWin ? { ws, we, end:r.win_end } : null, targets, stopMin, farM) : [];
+  return { plan, start, end, planLine, segs, stops, stopsConfigured, hasWin, stopMin, farM, closeFarM,
+    unchecked:plan.filter(p => p.closedAt !== null && p.carM === null).length,
+    noCoords:list.length > 0 && !segs.length };
+}
+
+/* Стоянки IMG — между концом поездки и началом следующей. Берём начавшиеся в окне дня (утро
+   у склада и вечер после финиша — не работа); стоянка, уходящая за финиш, режется по финишу. */
+function findStops(list, win, targets, stopMin, farM){
+  const stops = [];
+  list.forEach((a, i) => {
+    const at = latLng(a.end_lat, a.end_lng), s = msOf(a.ended_at);
+    if (!at || s === null || (win && !(s >= win.ws && s < win.we))) return;
+    const next = list[i + 1] ? msOf(list[i + 1].started_at) : null;
+    const untilFinish = !!win && (next === null || next > win.we);
+    const to = untilFinish ? win.end : next !== null ? list[i + 1].started_at : null;
+    const min = to ? (msOf(to) - s) / 60000 : null;
+    if (!(min >= stopMin)) return;
+    const { near, distM } = nearestPoint(at, targets);
+    stops.push({ ...at, from:a.ended_at, to, untilFinish, min, addr:a.end_addr, near, distM, far:!near || distM > farM });
+  });
+  return stops;
+}
+
+function nearestPoint(at, targets){
+  let near = null, distM = null;
+  for (const p of targets){ const m = haversineKm(at, p) * 1000; if (distM === null || m < distM){ distM = m; near = p; } }
+  return { near, distM };
+}
+/* Место машины по IMG в момент ms: в поездке — по прямой пропорционально времени, на стоянке —
+   конец предыдущей поездки. До первой и после последней поездки дня — их начало и конец. */
+function imgPositionAt(list, ms){
+  if (!Number.isFinite(ms)) return null;
+  let prev = null;
+  for (const t of list){
+    const s = Date.parse(t.started_at), e = Date.parse(t.ended_at);
+    const from = tripFrom(t, prev), to = latLng(t.end_lat, t.end_lng);
+    if (ms < s) return prev ? latLng(prev.end_lat, prev.end_lng) : from;
+    if (ms <= e){
+      if (!from || !to) return from || to;
+      const k = e > s ? (ms - s) / (e - s) : 1;
+      return { lat:from.lat + (to.lat - from.lat) * k, lng:from.lng + (to.lng - from.lng) * k };
+    }
+    prev = t;
+  }
+  return prev ? latLng(prev.end_lat, prev.end_lng) : null;
+}
+
+const nearName = p => !p ? '—' : p.a ? (p.a.type === 'start' ? 'склад (старт)' : 'склад (финиш)')
+  : `${p.row.planNo !== null ? '№ ' + p.row.planNo + ' · ' : ''}${p.row.a.address || p.row.a.label || 'точка'}`;
+
+function routeMapBlock(r, points, acts, trips){
+  const title = h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, 'Карта: план Dextra и путь машины по IMG'));
+  const d = routeMapData(r, points, acts, trips);
+  const notes = [];
+  if (trips && trips.error) notes.push('Поездки IMG не загрузились — на карте только точки Dextra.');
+  else if (!trips) notes.push('Номер машины не распознан — поездок IMG на карте нет.');
+  else if (!trips.length) notes.push('Поездок IMG за этот день нет: отчёт не загружен или машина не ездила.');
+  else if (d.noCoords) notes.push('У поездок IMG за этот день нет координат — загрузите отчёт IMG за эту дату заново на вкладке «Загрузка».');
+  if (!d.stopsConfigured) notes.push('Нет настроек map_stop_min / map_stop_far_m — стоянки IMG не показаны.');
+  if (d.closeFarM === null) notes.push('Нет настройки map_close_far_m — точки, закрытые вдали от машины, не отмечены.');
+  const note = notes.length ? h('p', { class:'msg info' }, notes.join(' ')) : null;
+  if (!d.plan.length && !d.segs.length){
+    return { nodes:[title, note, emptyBox('Рисовать нечего', 'Нет координат ни у точек Dextra, ни у поездок IMG.')], mount:() => {} };
+  }
+
+  const outside = d.segs.filter(s => !s.inWin);
+  const outBox = outside.length ? h('input', { type:'checkbox' }) : null;
+  const legend = h('div', { class:'map-legend' },
+    h('span', null, h('i', { class:'lg plan' }), 'план Dextra'),
+    h('span', null, h('i', { class:'lg pt closed' }), 'закрыта'),
+    h('span', null, h('i', { class:'lg pt closed away' }), 'закрыта вдали от машины'),
+    h('span', null, h('i', { class:'lg pt open' }), 'не закрыта'),
+    h('span', null, h('i', { class:'lg pt cancelled' }), 'отменена'),
+    h('span', null, h('i', { class:'lg depot' }), 'склад'),
+    h('span', null, h('i', { class:'lg img' }), d.hasWin ? 'поездка IMG в окне дня' : 'поездка IMG'),
+    h('span', null, h('i', { class:'lg far' }), 'стоянка IMG вне точек, мин'),
+    h('span', null, h('i', { class:'lg near' }), 'стоянка IMG у точки'));
+  const opt = outBox ? h('label', { class:'map-opt' }, outBox, ` поездки IMG вне окна дня (${outside.length})`) : null;
+  const el = h('div', { class:'map', role:'region', 'aria-label':'Карта маршрута' }, h('p', { class:'note map-wait' }, 'Загружаю карту…'));
+
+  const far = d.stops.filter(s => s.far);
+  const stopCols = [
+    { t:'Стоял', v:s => `${tm(s.from, r.route_date)}–${tm(s.to, r.route_date)}${s.untilFinish ? ' (финиш)' : ''}`, mono:true },
+    { t:'Минут', v:s => s.min, num:true, f:int },
+    { t:'Где (по IMG)', v:s => s.addr },
+    { t:'Ближайшая точка Dextra', v:s => nearName(s.near) },
+    { t:'До неё, км', v:s => s.distM === null ? null : s.distM / 1000, num:true, f:v => v === null ? '—' : nf1.format(v) },
+  ];
+  /* без поездок IMG с координатами судить не о чем — пустая таблица выглядела бы как «всё чисто» */
+  const stopsPart = !d.stopsConfigured || !d.segs.length ? [] : [
+    h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, `Стоянки IMG вне точек Dextra — ${far.length}`)),
+    h('p', { class:'note' }, `Машина стояла от ${int(d.stopMin)} мин дальше ${int(d.farM)} м от любой точки плана и склада${d.hasWin ? ', в окне дня' : ''}. Точки с заказами — где водитель и должен стоять — сюда не попадают.`),
+    h('div', { class:'tbl' }, table(stopCols, far, { empty:'Стоянок вне точек нет', emptyHint:'Все остановки машины — у точек маршрута или склада.' })),
+  ];
+  const away = d.plan.filter(p => p.carAway);
+  const awayCols = [
+    { t:'№ план', v:p => p.row.planNo, num:true },
+    { t:'Адрес', v:p => p.row.a.address || p.row.a.label },
+    { t:'Закрыта', v:p => tm(p.row.a.completed_at, r.route_date), mono:true },
+    { t:'Машина по IMG от точки, км', v:p => p.carM / 1000, num:true, f:km },
+  ];
+  const awayPart = d.closeFarM === null || !d.segs.length ? [] : [
+    h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, `Точки закрыты вдали от машины — ${away.length}`)),
+    h('p', { class:'note' }, `В момент закрытия точки машина по IMG была дальше ${int(d.closeFarM)} м от неё. Место машины между концами поездок IMG — по прямой, поэтому расстояние приблизительное.` +
+      (d.unchecked ? ` Не проверено точек: ${d.unchecked} — у соседних поездок IMG нет координат.` : '')),
+    h('div', { class:'tbl' }, table(awayCols, away, { empty:'Все точки закрыты рядом с машиной', emptyHint:'По IMG машина была у точки, когда водитель её закрывал.' })),
+  ];
+  return {
+    nodes:[title, note, h('div', { class:'bar' }, legend, opt), el,
+      h('p', { class:'note' }, 'Номер на точке — порядок в плане Dextra. Отрезки IMG — прямая от начала до конца поездки, не дорога. Наведите на точку, отрезок или стоянку — подробности.'),
+      ...awayPart, ...stopsPart].filter(Boolean),
+    mount:seq => loadLeaflet()
+      .then(L => { if (seq === detailSeq && el.isConnected) drawRouteMap(L, el, d, outBox, r.route_date); })
+      .catch(e => {
+        if (seq !== detailSeq) return;
+        dropRouteMap();   // сбой посреди рисования не должен оставить полкарты в памяти
+        el.replaceChildren(h('p', { class:'msg err' }, 'Карта не загрузилась: ' + e.message));
+      }),
+  };
+}
+
+/* карточка без карты, если её данные не собрались: точки и поездки важнее */
+function safeRouteMapBlock(r, points, acts, trips){
+  try { return routeMapBlock(r, points, acts, trips); }
+  catch(e){
+    return { nodes:[h('p', { class:'msg err' }, 'Карта маршрута не построилась: ' + e.message)], mount:() => {} };
+  }
+}
+
+function drawRouteMap(L, el, d, outBox, routeDate){
+  el.replaceChildren();
+  /* колесо мыши листает страницу, а не карту; масштаб — кнопками или двумя пальцами */
+  const map = L.map(el, { scrollWheelZoom:false });
+  const seen = [];   // всё видимое — по нему кадр карты
+  /* карточка могла открыться в скрытой вкладке (перезагрузка данных): Leaflet видит блок 0×0.
+     Тогда кадр строится, когда вкладку покажут (selectTab зовёт routeMap.fit). */
+  let fitted = false;
+  const fit = () => {
+    if (!el.clientWidth) return;
+    map.invalidateSize();
+    if (fitted) return;
+    fitted = true;
+    if (seen.length) map.fitBounds(L.latLngBounds(seen), { padding:[24, 24], maxZoom:16 });
+    else map.setView(MAP_DEFAULT_VIEW, 9);
+  };
+  routeMap = { map, fit };
+  /* в документе стоит no-referrer, а сервер OSM без Referer подложку не отдаёт — только адрес сайта */
+  L.tileLayer(OSM_TILES, { maxZoom:19, attribution:OSM_ATTRIBUTION, referrerPolicy:'strict-origin-when-cross-origin' }).addTo(map);
+  const icon = (cls, text, size) => L.divIcon({ className:cls, html:h('span', null, text), iconSize:size, iconAnchor:[size[0] / 2, size[1] / 2] });
+  const tip = (...lines) => h('div', { class:'map-tip' }, lines.filter(Boolean).map(x => h('div', null, x)));
+
+  if (d.planLine.length > 1) L.polyline(d.planLine, { color:MAP_COLOR.plan, weight:3, opacity:.75, dashArray:'6 6' }).addTo(map);
+  seen.push(...d.planLine);
+
+  const outLayer = L.layerGroup();
+  for (const s of d.segs){
+    const t = s.t;
+    const line = L.polyline([[s.from.lat, s.from.lng], [s.to.lat, s.to.lng]], s.inWin
+      ? { color:MAP_COLOR.img, weight:3, opacity:.9 }
+      : { color:MAP_COLOR.imgOut, weight:2, opacity:.9, dashArray:'4 6' });
+    line.bindTooltip(tip(`IMG ${tm(t.started_at, routeDate)}–${tm(t.ended_at, routeDate)} · ${km(n(t.km))} км` +
+      (n(t.max_speed) !== null ? ` · до ${int(n(t.max_speed))} км/ч` : ''),
+      t.start_addr ? 'откуда: ' + t.start_addr : null, t.end_addr ? 'куда: ' + t.end_addr : null), { sticky:true });
+    if (s.inWin){ line.addTo(map); seen.push([s.from.lat, s.from.lng], [s.to.lat, s.to.lng]); }
+    else outLayer.addLayer(line);
+  }
+  if (outBox) outBox.addEventListener('change', () => { if (outBox.checked) outLayer.addTo(map); else outLayer.remove(); });
+
+  for (const s of d.stops){
+    const text = [`Стоянка IMG ${tm(s.from, routeDate)}–${tm(s.to, routeDate)}${s.untilFinish ? ' (до финиша маршрута)' : ''}, ${int(s.min)} мин`, s.addr,
+      s.near ? `до точки Dextra ${km(s.distM / 1000)} км: ${nearName(s.near)}` : 'точек Dextra с координатами нет'];
+    const m = s.far ? L.marker([s.lat, s.lng], { icon:icon('map-stop', int(s.min), [40, 18]), zIndexOffset:500 })
+      : L.circleMarker([s.lat, s.lng], { radius:5, color:MAP_COLOR.img, weight:2, fillColor:'#fff', fillOpacity:1 });
+    m.bindTooltip(tip(...text)).addTo(map);
+    seen.push([s.lat, s.lng]);
+  }
+
+  const depots = [d.start, d.end].filter(Boolean);
+  const same = depots.length === 2 && haversineKm(depots[0], depots[1]) < 0.05;
+  for (const p of same ? [d.start] : depots){
+    const times = same ? `старт ${tm(d.start.a.completed_at, routeDate)} · финиш ${tm(d.end.a.completed_at, routeDate)}`
+      : `${p.a.type === 'start' ? 'старт' : 'финиш'} ${tm(p.a.completed_at, routeDate)}`;
+    L.marker([p.lat, p.lng], { icon:icon('map-depot', 'С', [22, 22]), zIndexOffset:900 })
+      .bindTooltip(tip('Склад', times)).addTo(map);
+    seen.push([p.lat, p.lng]);
+  }
+  for (const p of d.plan){
+    const a = p.row.a;
+    L.marker([p.lat, p.lng], { icon:icon('map-pt ' + p.state + (p.carAway ? ' away' : ''), p.row.planNo ?? '+', [22, 22]), zIndexOffset:1000 })
+      .bindTooltip(tip(
+        `${p.row.planNo !== null ? '№ ' + p.row.planNo + ' в плане' : 'вне оптимизации'}${p.row.factNo !== null ? ' · ' + p.row.factNo + '-я по факту' : ''}`,
+        a.address || a.label,
+        `план ${tm(a.planned_at, routeDate)} · закрыта ${tm(a.completed_at, routeDate)}`,
+        p.carM !== null ? `машина по IMG в момент закрытия — в ${km(p.carM / 1000)} км от точки` : null,
+        p.row.flags.length ? p.row.flags.map(f => f[0]).join(', ') : null)).addTo(map);
+    seen.push([p.lat, p.lng]);
+  }
+  fit();
 }
 
 /* ============ загрузка отчётов IMG ============ */
@@ -1532,6 +1908,7 @@ function selectTab(id){
   $('page-title').textContent = $(id).getAttribute('aria-label');
   /* загрузка и настройки от периода и города не зависят — фильтры там только мешают */
   $('filters').hidden = id === 't-sync' || id === 't-cfg';
+  if (routeMap) routeMap.fit();   // карта, нарисованная в скрытой вкладке, получила размер
 }
 TABS.forEach((t, i) => {
   $(t).addEventListener('click', () => selectTab(t));
@@ -1580,6 +1957,9 @@ async function signOut(reason){
   const token = session && session.access_token;
   authEpoch++;
   dropSession();
+  /* сбой Leaflet при снятии карты не должен прервать выход и оставить чужие данные на экране;
+     ссылка на карту к этому моменту уже снята */
+  try { dropRouteMap(); } catch(e){ /* карта ушла вместе с блоком, дальше чистим как обычно */ }
   /* на общем компьютере следующий вошедший не должен увидеть чужие данные */
   loadSeq++; detailSeq++;
   settings = {}; settingRows = []; rules = {}; routes = []; anomalies = []; syncLog = [];

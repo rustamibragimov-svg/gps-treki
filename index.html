@@ -293,7 +293,7 @@ const SEV_NAMES  = { 1:'высокая', 2:'средняя', 3:'инфо' };
 /* без них часть проверок молча выключится — страница говорит об этом вслух */
 const REQUIRED_SETTINGS = ['a5_coverage_min', 'a6_coverage_min', 'a7_quick_close_sec', 'a8_batch_points', 'a9_idle_min',
   'a11_ratio_min', 'a12_min_km', 'a12_min_legs', 'a12_speed_kmh', 'day_end_ceiling', 'day_start_floor',
-  'dextra_return_fix_date', 'return_cap_minutes'];
+  'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to'];
 
 /* ============ хранилище (только этот браузер) ============ */
 const local = (() => {
@@ -703,8 +703,8 @@ function filters(){
   return { from:$('f-from').value, to:$('f-to').value, city:cityFilter, stable:$('f-stable').checked };
 }
 function saveUi(){ local.set(UI_KEY, JSON.stringify(filters())); }
-/* маршрут в статистике: не обкатка (если включён фильтр) и есть хоть одна закрытая точка */
-const statsFilter = () => { const stable = $('f-stable').checked; return r => !(stable && r.is_break_in) && !r.is_void; };
+/* маршрут в статистике: не обкатка (если включён фильтр), не выходной и есть хоть одна закрытая точка */
+const statsFilter = () => { const stable = $('f-stable').checked; return r => !(stable && r.is_break_in) && !r.is_day_off && !r.is_void; };
 
 function setPressed(groupId, pick){
   for (const b of $(groupId).querySelectorAll('.pill')) b.setAttribute('aria-pressed', String(pick(b)));
@@ -791,7 +791,7 @@ function aggregate(rows, inStats){
     ratio:sum(covOk, r => r.plan_km) ? sum(covOk, r => r.gps_km) / sum(covOk, r => r.plan_km) : null,
     coverage:median(st.map(r => n(r.coverage_pct))),
     closedShare:pts ? sum(st, r => r.closed) / pts : null,
-    cancelled:sum(st, r => r.cancelled), noRouting:sum(st, r => r.no_routing),
+    cancelled:sum(st, r => r.cancelled),
     oooShare:sum(st, r => r.closed) ? sum(st, r => r.out_of_order) / sum(st, r => r.closed) : null,
     impossible:sum(st, r => r.impossible_legs), late:sum(st, r => r.late_closes),
     hours:median(st.map(r => n(r.work_hours))),
@@ -862,14 +862,8 @@ function renderSummary(){
     { t:'Покрытие GPS, медиана', v:r => r.coverage, num:true, f:v => v === null ? '—' : int(v) + '%', bad:r => covMin !== null && r.coverage !== null && r.coverage < covMin },
     { t:'План, км', v:r => r.plan, num:true, f:km, title:r => `по ${r.bothRoutes} маршрутам, где есть и план, и факт` },
     { t:'Факт GPS, км', v:r => r.gps, num:true, f:km },
-    { t:`Факт / план (покр. ≥ ${covMin ?? '—'}%)`, v:r => r.ratio, num:true, f:pct, title:r => `по ${r.covRoutes} маршрутам с хорошим покрытием` },
     { t:'Точек закрыто', v:r => r.closedShare, num:true, f:pct },
     { t:'Отменено', v:r => r.cancelled, num:true, f:int },
-    { t:'Вне оптимизации', v:r => r.noRouting, num:true, f:int, title:() => 'точки добавлены после построения маршрута' },
-    { t:'Вне очереди', v:r => r.oooShare, num:true, f:pct, title:() => 'доля закрытых точек, к которым вернулись после более поздних по плану' },
-    { t:'Невозм. переезды', v:r => r.impossible, num:true, f:int },
-    { t:'Закрыто поздно', v:r => r.late, num:true, f:int },
-    { t:'День, ч (медиана)', v:r => r.hours, num:true, f:v => v === null ? '—' : nf1.format(v) },
     { t:'С IMG, маршр.', v:r => r.imgRoutes, num:true, f:int },
     { t:'IMG в окне дня, км', v:r => r.imgKm, num:true, f:km },
     { t:'Вне маршрута, км', v:r => r.outsideKm, num:true, f:km, bad:r => r.outsideKm > 0, title:() => 'сумма превышений IMG над Dextra в окне рабочего дня' },
@@ -882,7 +876,7 @@ function renderSummary(){
 
   const excluded = routes.length - total.routes;
   const notes = [];
-  if (excluded) notes.push(`Не вошло в статистику маршрутов: ${excluded} (${$('f-stable').checked ? 'период обкатки или ' : ''}ни одной закрытой точки).`);
+  if (excluded) notes.push(`Не вошло в статистику маршрутов: ${excluded} (${$('f-stable').checked ? 'период обкатки, ' : ''}выходной или ни одной закрытой точки).`);
   notes.push(`Факт GPS — пробег по телефону водителя в Dextra; там, где покрытие ниже ${covMin ?? '—'}%, он занижен, поэтому факт / план считается только по маршрутам с хорошим покрытием.`);
   const fix = settings.dextra_return_fix_date;
   if (fix && loaded && loaded.from < fix) notes.push(`До ${ruDate(fix)} Dextra не считала обратную дорогу на склад: факт за эти дни занижен, и «факт меньше плана» — не экономия.`);
@@ -891,8 +885,8 @@ function renderSummary(){
 
 function renderAnomalies(){
   const stable = $('f-stable').checked;
-  const ids = new Set(routes.filter(r => !(stable && r.is_break_in)).map(r => r.route_id));
-  /* A3 (день без маршрута) не привязан к маршруту; обкатку для него база уже отсекла */
+  const ids = new Set(routes.filter(r => !(stable && r.is_break_in) && !r.is_day_off).map(r => r.route_id));
+  /* A3 (день без маршрута) не привязан к маршруту; обкатку и выходные для него база уже отсекла */
   const rows = anomalies.filter(a => a.severity <= sevFilter && (!a.route_id || ids.has(a.route_id)));
   const cols = [
     { t:'Важность', v:r => SEV_NAMES[r.severity], f:(v, r) => chip(v, 'sev' + r.severity) },
@@ -904,7 +898,7 @@ function renderAnomalies(){
     { t:'Подробно', v:r => r.message },
   ];
   put('tbl-anom', table(cols, rows, { onClick:r => showRoute(r.route_id), canClick:r => !!r.route_id,
-    empty:'Аномалий нет', emptyHint:'Или период целиком в обкатке.' }));
+    empty:'Аномалий нет', emptyHint:'Или период целиком в обкатке или в выходных.' }));
   csvTables.anom = { cols, rows, file:fileName('anomalii') };
   put('tbl-anom-legend', table([
     { t:'Код', v:r => r.code, mono:true }, { t:'Правило', v:r => r.title }, { t:'Что значит', v:r => r.description },
@@ -944,6 +938,7 @@ function renderDrivers(){
 function routeFlags(r){
   const out = [];
   if (r.is_break_in) out.push(['обкатка', '']);
+  if (r.is_day_off) out.push(['выходной', '']);
   if (r.is_void) out.push(['нет закрытых', 'bad']);
   if (r.before_return_fix) out.push(['без возврата', '']);
   for (const a of anomaliesByRoute.get(r.route_id) || []){
@@ -1110,6 +1105,7 @@ function routeDetail(r, acts, trips){
   );
   const notes = [];
   if (r.is_break_in) notes.push('День в периоде обкатки Dextra — в статистику не идёт.');
+  if (r.is_day_off) notes.push('Выходной день (воскресенье или суббота вне высокого сезона) — в статистику и аномалии не идёт.');
   if (r.before_return_fix) notes.push('До исправления Dextra не считала обратную дорогу на склад: факт GPS занижен на возврат.');
   if (lowCov) notes.push(`Покрытие GPS ниже ${covMin}% — факт км недоказуем.`);
   if (im){

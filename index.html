@@ -136,6 +136,17 @@
   .chip.info{background:var(--info-bg);color:var(--primary)}
   td .chip{margin:0 4px 3px 0}
 
+  /* контрольные точки: ✓ норма, ✗ нарушение, – проверить нельзя */
+  .cp{font-family:var(--mono);font-size:12px;font-weight:600}
+  .cp.ok{color:var(--success-fg)} .cp.fail{color:var(--danger-fg)} .cp.na{color:var(--muted-fg);font-weight:400}
+  /* раскрытая строка: водители города за день */
+  tr.open td{background:var(--info-bg)}
+  tr.sub > td{padding:0 0 8px 24px;background:#F8FAFC}
+  tr.sub table{background:var(--card);border-left:2px solid var(--primary)}
+  tr.sub th{position:static}
+  details.more{margin-bottom:16px}
+  details.more summary{cursor:pointer;font-size:14px;font-weight:600;margin-bottom:12px}
+
   .empty{padding:64px 16px;text-align:center}
   .empty .ico{width:48px;height:48px;margin:0 auto 12px;border-radius:var(--radius);background:var(--muted);color:var(--muted-fg);
     display:flex;align-items:center;justify-content:center}
@@ -176,14 +187,12 @@
 <div class="shell" id="app" hidden>
   <aside class="side">
    <div class="tabs" role="tablist" id="tabs" aria-label="Разделы" aria-orientation="vertical">
-    <button role="tab" id="t-sum" aria-controls="p-sum" aria-selected="true" aria-label="Сводка по городам" title="Сводка">
+    <button role="tab" id="t-sum" aria-controls="p-sum" aria-selected="true" aria-label="Свод за период" title="Свод">
       <svg class="i" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg></button>
+    <button role="tab" id="t-det" aria-controls="p-det" aria-selected="false" aria-label="Детализация по дням" title="Детализация">
+      <svg class="i" viewBox="0 0 24 24"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg></button>
     <button role="tab" id="t-anom" aria-controls="p-anom" aria-selected="false" aria-label="Аномалии" title="Аномалии">
       <svg class="i" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></button>
-    <button role="tab" id="t-drv" aria-controls="p-drv" aria-selected="false" aria-label="Водители" title="Водители">
-      <svg class="i" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
-    <button role="tab" id="t-rt" aria-controls="p-rt" aria-selected="false" aria-label="Маршруты" title="Маршруты">
-      <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg></button>
     <button role="tab" id="t-sync" aria-controls="p-sync" aria-selected="false" aria-label="Загрузка данных" title="Загрузка данных">
       <svg class="i" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
     <button role="tab" id="t-cfg" aria-controls="p-cfg" aria-selected="false" aria-label="Настройки расчёта" title="Настройки">
@@ -200,7 +209,7 @@
   <div class="content">
     <div class="topbar">
       <div>
-        <h1 id="page-title">Сводка по городам</h1>
+        <h1 id="page-title">Свод за период</h1>
         <p><span class="led" id="led"></span><span id="conn">вход не выполнен</span></p>
       </div>
     </div>
@@ -223,32 +232,29 @@
         <p class="note" id="note-sum"></p>
       </section>
 
+      <section role="tabpanel" id="p-det" aria-labelledby="t-det" hidden>
+        <div class="bar"><h2>По дням и городам</h2>
+          <div class="fgroup" id="f-sort" role="group" aria-label="Порядок строк">
+            <button class="pill" data-sort="date" aria-pressed="true">по дате</button>
+            <button class="pill" data-sort="fails" aria-pressed="false">по нарушениям</button>
+          </div>
+          <button class="btn" data-csv="det">
+            <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
+        <p class="note" id="note-det"></p>
+        <div class="tbl" id="tbl-det"></div>
+        <div id="route-detail"></div>
+      </section>
+
       <section role="tabpanel" id="p-anom" aria-labelledby="t-anom" hidden>
         <div class="bar"><h2>Что разбирать</h2>
           <div class="fgroup" id="f-sev" role="group" aria-label="Какие аномалии показывать">
-            <button class="pill" data-sev="2" aria-pressed="true">высокая и средняя</button>
-            <button class="pill" data-sev="1" aria-pressed="false">только высокая</button>
+            <button class="pill" data-sev="1" aria-pressed="true">только высокая</button>
+            <button class="pill" data-sev="2" aria-pressed="false">высокая и средняя</button>
             <button class="pill" data-sev="3" aria-pressed="false">все</button>
           </div>
           <button class="btn" data-csv="anom">
             <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
         <div class="tbl" id="tbl-anom"></div>
-        <div class="bar"><h2>Правила</h2></div>
-        <div class="tbl" id="tbl-anom-legend"></div>
-      </section>
-
-      <section role="tabpanel" id="p-drv" aria-labelledby="t-drv" hidden>
-        <div class="bar"><h2>По водителям</h2><button class="btn" data-csv="drv">
-          <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
-        <p class="note">Первая колонка — покрытие GPS: где трекер в телефоне молчал, факт км Dextra занижен и выводы о водителе делать нельзя. Факт / план — только по маршрутам с покрытием не ниже порога.</p>
-        <div class="tbl" id="tbl-drv"></div>
-      </section>
-
-      <section role="tabpanel" id="p-rt" aria-labelledby="t-rt" hidden>
-        <div class="bar"><h2>Все маршруты периода</h2><button class="btn" data-csv="rt">
-          <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
-        <div class="tbl" id="tbl-rt"></div>
-        <div id="route-detail"></div>
       </section>
 
       <section role="tabpanel" id="p-sync" aria-labelledby="t-sync" hidden>
@@ -264,13 +270,16 @@
         <div class="bar"><h2>Dextra</h2></div>
         <p class="note">Маршруты загружаются автоматически каждый день в 20:00 по Ташкенту: сегодняшний день и три предыдущих.</p>
         <div class="tbl" id="tbl-sync-city"></div>
-        <div class="bar"><h2>Журнал</h2></div>
-        <div class="tbl" id="tbl-sync"></div>
+        <details class="more"><summary>Журнал загрузок Dextra</summary>
+          <div class="tbl" id="tbl-sync"></div>
+        </details>
       </section>
 
       <section role="tabpanel" id="p-cfg" aria-labelledby="t-cfg" hidden>
         <p class="note">Пороги и границы рабочего дня. Пока меняются в базе (таблица settings).</p>
         <div class="tbl" id="tbl-cfg"></div>
+        <div class="bar"><h2>Правила аномалий</h2></div>
+        <div class="tbl" id="tbl-anom-legend"></div>
       </section>
     </main>
   </div>
@@ -291,9 +300,14 @@ const DEFAULT_DAYS = 14;
 const CITY_NAMES = { FERGHANA:'Фергана', KOKAND:'Коканд', NAMANGAN:'Наманган', ANDIJAN:'Андижан' };
 const SEV_NAMES  = { 1:'высокая', 2:'средняя', 3:'инфо' };
 /* без них часть проверок молча выключится — страница говорит об этом вслух */
-const REQUIRED_SETTINGS = ['a5_coverage_min', 'a6_coverage_min', 'a7_quick_close_sec', 'a8_batch_points', 'a9_idle_min',
+const REQUIRED_SETTINGS = ['a6_coverage_min', 'a7_quick_close_sec', 'a8_batch_points', 'a9_idle_min',
   'a11_ratio_min', 'a12_min_km', 'a12_min_legs', 'a12_speed_kmh', 'day_end_ceiling', 'day_start_floor',
-  'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to'];
+  'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to',
+  'cp1_ratio_max', 'cp2_coverage_min', 'cp3_diff_km', 'cp3_diff_share'];
+/* контрольные точки маршрута (статусы считает v_route_checks): символ, класс, словом */
+const CP_KEYS = ['cp1', 'cp2', 'cp3'];
+const CP_STATE = { ok:['✓', 'ok', 'норма'], fail:['✗', 'fail', 'нарушение'], na:['–', 'na', 'проверить нельзя'] };
+const CP_NAMES = { cp1:'КТ1 план / факт', cp2:'КТ2 GPS', cp3:'КТ3 сверка с IMG' };
 
 /* ============ хранилище (только этот браузер) ============ */
 const local = (() => {
@@ -595,14 +609,9 @@ const nf0 = new Intl.NumberFormat('ru-RU', { maximumFractionDigits:0 });
 const km  = v => v === null || v === undefined || !isFinite(v) ? '—' : nf1.format(v);
 const int = v => v === null || v === undefined || !isFinite(v) ? '—' : nf0.format(v);
 const pct = v => v === null || v === undefined || !isFinite(v) ? '—' : nf0.format(v * 100) + '%';
+const signedKm = v => v === null || v === undefined || !isFinite(v) ? '—' : (v > 0 ? '+' : '') + nf1.format(v);
 const sum = (rows, f) => rows.reduce((s, r) => s + (n(f(r)) || 0), 0);
 const byText = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'ru');
-function median(vals){
-  const a = vals.filter(v => v !== null && isFinite(v)).sort((x, y) => x - y);
-  if (!a.length) return null;
-  const m = Math.floor(a.length / 2);
-  return a.length % 2 ? a[m] : (a[m-1] + a[m]) / 2;
-}
 const cityName = c => CITY_NAMES[c] || c || '—';
 
 const fmtTime = new Intl.DateTimeFormat('ru-RU', { timeZone:TZ, hour:'2-digit', minute:'2-digit' });
@@ -639,7 +648,8 @@ function emptyBox(title, hint){
   return h('div', { class:'empty' },
     h('div', { class:'ico' }, '—'), h('b', null, title), hint ? h('span', null, hint) : null);
 }
-/* col: { t: заголовок, v: row → значение (для CSV тоже), f: формат, num, mono, bad, weak, title } */
+/* col: { t: заголовок, v: row → значение (для CSV тоже), f: формат, num, mono, bad, weak, title }
+   opts.expand: row → узел под строкой во всю ширину (раскрытая строка) или null */
 function table(cols, rows, opts){
   opts = opts || {};
   if (!rows.length && !opts.total) return emptyBox(opts.empty || 'Нет данных', opts.emptyHint || 'Попробуйте другой период или город.');
@@ -649,17 +659,21 @@ function table(cols, rows, opts){
     const cls = [c.num ? 'num' : '', c.mono ? 'mono' : '', c.bad && c.bad(r) ? 'bad' : '', c.weak && c.weak(r) ? 'weak' : ''].filter(Boolean).join(' ');
     return h('td', { class:cls || null, title:c.title ? c.title(r) : null }, shown);
   };
-  const body = rows.map(r => {
+  const body = rows.flatMap(r => {
     const sel = opts.selected ? opts.selected(r) : false;
+    const sub = opts.expand ? opts.expand(r) : null;
     const clickable = !!opts.onClick && (!opts.canClick || opts.canClick(r));
-    const attrs = { class:[clickable ? 'click' : '', sel ? 'sel' : ''].filter(Boolean).join(' ') || null };
+    const attrs = { class:[clickable ? 'click' : '', sel ? 'sel' : '', sub ? 'open' : ''].filter(Boolean).join(' ') || null,
+      'data-key':opts.rowKey ? opts.rowKey(r) : null };
     if (clickable){
       attrs.tabindex = '0';
       attrs['aria-current'] = sel ? 'true' : null;
+      if (opts.expand) attrs['aria-expanded'] = String(!!sub);
       attrs.onclick = () => opts.onClick(r);
       attrs.onkeydown = e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); opts.onClick(r); } };
     }
-    return h('tr', attrs, cols.map(c => cell(c, r)));
+    const tr = h('tr', attrs, cols.map(c => cell(c, r)));
+    return sub ? [tr, h('tr', { class:'sub' }, h('td', { colspan:String(cols.length) }, sub))] : [tr];
   });
   if (opts.total) body.push(h('tr', { class:'total' }, cols.map(c => cell(c, opts.total))));
   return h('table', null,
@@ -667,6 +681,12 @@ function table(cols, rows, opts){
     h('tbody', null, body));
 }
 function put(id, node){ $(id).replaceChildren(node); }
+/* таблица перерисована целиком — вернуть фокус клавиатуры на ту же строку */
+function refocus(id, key){
+  if (!key) return;
+  const tr = [...$(id).querySelectorAll('tr[data-key]')].find(x => x.dataset.key === key);
+  if (tr) tr.focus({ preventScroll:true });
+}
 const chip = (text, cls) => h('span', { class:'chip ' + (cls || '') }, text);
 
 /* ============ CSV ============ */
@@ -695,7 +715,8 @@ function downloadCsv(name){
 let settings = {}, settingRows = [], rules = {}, routes = [], anomalies = [], syncLog = [];
 let aliasMap = new Map(), imgLoads = [], imgDraft = [], knownVehicles = null;
 let anomaliesByRoute = new Map(), loaded = null, openRoute = null, loadSeq = 0, detailSeq = 0;
-let cityFilter = '', sevFilter = 2;
+let cityFilter = '', sevFilter = 1;
+let openDay = null, detSort = 'date';   // раскрытая строка «день|город» в Детализации и её порядок
 const cfg = k => n(settings[k]);
 const ruleTitle = code => (rules[code] && rules[code].title) || code;
 
@@ -723,7 +744,7 @@ async function loadData(){
   $('btn-load').disabled = true;
   try {
     const range = `route_date=gte.${q(f.from)}&route_date=lte.${q(f.to)}` + (f.city ? `&city=eq.${q(f.city)}` : '');
-    const [s, ru, r, a, l, ri, al, il] = await Promise.all([
+    const [s, ru, r, a, l, ri, al, il, ch] = await Promise.all([
       api('settings?select=key,value,note&order=key'),
       api('anomaly_rules?select=code,title,description,sort&order=sort'),
       apiAll(`v_route_metrics?select=*&${range}&order=route_date.desc,city,courier_name,route_id`),
@@ -732,14 +753,16 @@ async function loadData(){
       apiAll(`v_route_img?select=*&${range}&order=route_date.desc,route_id`),
       api('vehicle_aliases?select=alias_key,plate_key,note&order=alias_key'),
       api('img_loads?select=*&order=id.desc&limit=300'),
+      apiAll(`v_route_checks?select=route_id,cp1,cp2,cp3&${range}&order=route_id`),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
     settings = Object.fromEntries(s.map(x => [x.key, x.value]));
     rules = Object.fromEntries(ru.map(x => [x.code, x]));
-    /* IMG по маршруту — отдельным полем, а не правкой строки из базы */
+    /* IMG и контрольные точки маршрута — отдельными полями, а не правкой строки из базы */
     const imgBy = new Map(ri.map(x => [x.route_id, x]));
-    routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null }));
+    const chkBy = new Map(ch.map(x => [x.route_id, x]));
+    routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null, chk:chkBy.get(x.route_id) || null }));
     anomalies = a; syncLog = l; imgLoads = il;
     aliasMap = new Map(al.map(x => [x.alias_key, x.plate_key]));
     anomaliesByRoute = new Map();
@@ -773,29 +796,24 @@ async function loadData(){
 }
 
 /* ============ агрегаты ============ */
+const cpOf = (r, k) => (r.chk && r.chk[k]) || 'na';
+const routeFails = r => CP_KEYS.filter(k => cpOf(r, k) === 'fail').length;
+
 function aggregate(rows, inStats){
-  const covMin = cfg('a6_coverage_min');
   const st = rows.filter(inStats);
   /* план и факт складываем по одному и тому же набору маршрутов — где есть оба */
   const both = st.filter(r => n(r.plan_km) !== null && n(r.gps_km) !== null);
-  const covOk = both.filter(r => covMin !== null && n(r.coverage_pct) !== null && n(r.coverage_pct) >= covMin && n(r.plan_km) > 0);
-  const pts = sum(st, r => r.deliveries) - sum(st, r => r.cancelled);
-  const an = st.flatMap(r => anomaliesByRoute.get(r.route_id) || []);
+  /* факт / план — по всем маршрутам с планом: факт Dextra верен и при слабом GPS
+     (трек дописывается, когда связь возвращается) */
+  const withPlan = both.filter(r => n(r.plan_km) > 0);
+  const cp = k => ({ fail:st.filter(r => cpOf(r, k) === 'fail').length, checked:st.filter(r => cpOf(r, k) !== 'na').length });
   return {
     routes:st.length,
-    days:new Set(st.map(r => r.route_date)).size,
-    couriers:new Set(st.map(r => r.courier_id || r.courier_name)).size,
     bothRoutes:both.length,
     plan:sum(both, r => r.plan_km), gps:sum(both, r => r.gps_km),
-    covRoutes:covOk.length,
-    ratio:sum(covOk, r => r.plan_km) ? sum(covOk, r => r.gps_km) / sum(covOk, r => r.plan_km) : null,
-    coverage:median(st.map(r => n(r.coverage_pct))),
-    closedShare:pts ? sum(st, r => r.closed) / pts : null,
-    cancelled:sum(st, r => r.cancelled),
-    oooShare:sum(st, r => r.closed) ? sum(st, r => r.out_of_order) / sum(st, r => r.closed) : null,
-    impossible:sum(st, r => r.impossible_legs), late:sum(st, r => r.late_closes),
-    hours:median(st.map(r => n(r.work_hours))),
-    an1:an.filter(x => x.severity === 1).length, an2:an.filter(x => x.severity === 2).length,
+    ratio:sum(withPlan, r => r.plan_km) ? sum(withPlan, r => r.gps_km) / sum(withPlan, r => r.plan_km) : null,
+    cp1:cp('cp1'), cp2:cp('cp2'), cp3:cp('cp3'),
+    failRoutes:st.filter(r => routeFails(r) > 0).length,
     ...imgAggregate(st),
   };
 }
@@ -803,17 +821,26 @@ function aggregate(rows, inStats){
    «Вне маршрута» — сумма превышений: где IMG насчитал меньше Dextra, это дыры трекера,
    а не экономия, и вычитать их из чужих превышений нельзя. */
 function imgAggregate(st){
-  const withImg = st.filter(r => r.img && r.img.img_loaded && r.win_end);
+  const withImg = st.filter(r => r.img && r.img.img_loaded && !r.img.dextra_ref_is_plan && r.win_end);
   return {
     imgRoutes:withImg.length,
-    imgKm:withImg.length ? sum(withImg, r => r.img.img_km_window) : null,
     outsideKm:withImg.length ? withImg.reduce((s, r) => s + Math.max(0, n(r.img.outside_km) || 0), 0) : null,
   };
 }
-/* A3 — аномалия дня без маршрута: в счётчики города и водителя добавляется отдельно */
-function withUnrouted(agg, match){
-  const extra = anomalies.filter(a => !a.route_id && match(a));
-  return { ...agg, an1:agg.an1 + extra.filter(a => a.severity === 1).length, an2:agg.an2 + extra.filter(a => a.severity === 2).length };
+/* подписи порогов КТ — из настроек, в исходнике страницы их нет */
+function cpLabels(){
+  const r = cfg('cp1_ratio_max'), cov = cfg('cp2_coverage_min');
+  return {
+    cp1:`КТ1 факт выше плана более чем на ${r === null ? '—' : int((r - 1) * 100)}%`,
+    cp2:`КТ2 GPS ниже ${cov ?? '—'}%`,
+    cp3:'КТ3 факт Dextra расходится с IMG',
+    cov,
+  };
+}
+/* «нарушений / проверено» — колонка КТ для таблиц Свода и Детализации */
+function cpCol(k, title){
+  return { t:title, v:r => `${r[k].fail} / ${r[k].checked}`, num:true, bad:r => r[k].fail > 0,
+    title:r => `нарушений ${r[k].fail} из ${r[k].checked} проверенных маршрутов` };
 }
 function groupBy(rows, key){
   const m = new Map();
@@ -825,8 +852,8 @@ const fileName = base => `${base}_${loaded ? loaded.from + '_' + loaded.to : 'pu
 /* ============ отрисовка ============ */
 /* Каждый раздел рисуется отдельно: ошибка в одном не должна гасить остальные. */
 function renderAll(){
-  const parts = [['Сводка', renderSummary], ['Аномалии', renderAnomalies], ['Водители', renderDrivers],
-    ['Маршруты', renderRoutes], ['Загрузка', renderSync], ['Настройки', renderSettings]];
+  const parts = [['Свод', renderSummary], ['Детализация', renderDetail], ['Аномалии', renderAnomalies],
+    ['Загрузка', renderSync], ['Настройки', renderSettings]];
   const failed = [];
   for (const [name, fn] of parts){
     try { fn(); } catch(e){ failed.push(`${name}: ${e.message}`); }
@@ -838,46 +865,50 @@ function kpiCard(value, label, tone){
   return h('div', { class:'kpi' }, h('span', null, label), h('b', { class:tone || null }, value));
 }
 
+/* колонки, общие для Свода и Детализации */
+function kmCols(L){
+  return [
+    { t:'Маршрутов', v:r => r.routes, num:true, f:int },
+    { t:'План, км', v:r => r.plan, num:true, f:km, title:r => `по ${r.bothRoutes} маршрутам, где есть и план, и факт` },
+    { t:'Факт GPS, км', v:r => r.gps, num:true, f:km },
+    { t:'Факт / план', v:r => r.ratio, num:true, f:pct },
+    ...CP_KEYS.map(k => cpCol(k, CP_NAMES[k])),
+    { t:'С нарушениями', v:r => r.failRoutes, num:true, f:int, bad:r => r.failRoutes > 0, title:() => 'маршрутов, где нарушена хотя бы одна КТ' },
+    { t:'Вне маршрута, км', v:r => r.outsideKm, num:true, f:km, bad:r => r.outsideKm > 0,
+      title:r => `сумма превышений IMG над Dextra в окне маршрута, ${r.imgRoutes} маршр. с отчётом IMG` },
+  ];
+}
+function cpCard(c, label){
+  return kpiCard(int(c.fail), `${label} · из ${int(c.checked)} проверенных`, c.fail ? 'danger' : c.checked ? 'success' : null);
+}
+
 function renderSummary(){
   const inStats = statsFilter();
-  const total = withUnrouted(aggregate(routes, inStats), () => true);
-  let byCity = [...groupBy(routes, r => r.city)].map(([city, rows]) => ({ key:cityName(city), ...aggregate(rows, inStats) }))
+  const total = aggregate(routes, inStats);
+  const byCity = [...groupBy(routes, r => r.city)].map(([city, rows]) => ({ key:cityName(city), ...aggregate(rows, inStats) }))
     .sort((a, b) => byText(a.key, b.key));
-  const covMin = cfg('a6_coverage_min');
+  const L = cpLabels();
   $('kpis').replaceChildren(
     kpiCard(int(total.routes), 'Маршрутов в статистике'),
     kpiCard(km(total.plan), 'План, км'),
     kpiCard(km(total.gps), 'Факт GPS Dextra, км'),
-    kpiCard(pct(total.ratio), `Факт / план при покрытии ≥ ${covMin ?? '—'}%`),
-    kpiCard(pct(total.closedShare), 'Точек закрыто'),
+    kpiCard(pct(total.ratio), 'Факт / план'),
+    cpCard(total.cp1, L.cp1),
+    cpCard(total.cp2, L.cp2),
+    cpCard(total.cp3, L.cp3),
     kpiCard(km(total.outsideKm), `Км вне маршрута по IMG (${int(total.imgRoutes)} маршр.)`, total.outsideKm > 0 ? 'warning' : null),
-    kpiCard(int(total.an1) + ' / ' + int(total.an2), 'Аномалий: высоких / средних', total.an1 ? 'danger' : total.an2 ? 'warning' : 'success'),
   );
 
-  const cols = [
-    { t:'Город', v:r => r.key },
-    { t:'Маршрутов', v:r => r.routes, num:true, f:int },
-    { t:'Дней', v:r => r.days, num:true, f:int },
-    { t:'Водителей', v:r => r.couriers, num:true, f:int },
-    { t:'Покрытие GPS, медиана', v:r => r.coverage, num:true, f:v => v === null ? '—' : int(v) + '%', bad:r => covMin !== null && r.coverage !== null && r.coverage < covMin },
-    { t:'План, км', v:r => r.plan, num:true, f:km, title:r => `по ${r.bothRoutes} маршрутам, где есть и план, и факт` },
-    { t:'Факт GPS, км', v:r => r.gps, num:true, f:km },
-    { t:'Точек закрыто', v:r => r.closedShare, num:true, f:pct },
-    { t:'Отменено', v:r => r.cancelled, num:true, f:int },
-    { t:'С IMG, маршр.', v:r => r.imgRoutes, num:true, f:int },
-    { t:'IMG в окне дня, км', v:r => r.imgKm, num:true, f:km },
-    { t:'Вне маршрута, км', v:r => r.outsideKm, num:true, f:km, bad:r => r.outsideKm > 0, title:() => 'сумма превышений IMG над Dextra в окне рабочего дня' },
-    { t:'Аномалий выс. / сред.', v:r => r.an1 + ' / ' + r.an2, num:true },
-  ];
-  const totalRow = { key:'Итого', ...total };   // A3 в total уже учтены
-  byCity = byCity.map(x => withUnrouted(x, a => cityName(a.city) === x.key));
+  const cols = [{ t:'Город', v:r => r.key }, ...kmCols(L)];
+  const totalRow = { key:'Итого', ...total };
   put('tbl-sum', table(cols, byCity, { total:byCity.length > 1 ? totalRow : null }));
-  csvTables.sum = { cols, rows:byCity.concat(byCity.length > 1 ? [totalRow] : []), file:fileName('svodka') };
+  csvTables.sum = { cols, rows:byCity.concat(byCity.length > 1 ? [totalRow] : []), file:fileName('svod') };
 
   const excluded = routes.length - total.routes;
   const notes = [];
   if (excluded) notes.push(`Не вошло в статистику маршрутов: ${excluded} (${$('f-stable').checked ? 'период обкатки, ' : ''}выходной или ни одной закрытой точки).`);
-  notes.push(`Факт GPS — пробег по телефону водителя в Dextra; там, где покрытие ниже ${covMin ?? '—'}%, он занижен, поэтому факт / план считается только по маршрутам с хорошим покрытием.`);
+  notes.push(`В колонках КТ — нарушений / проверено. Факт км Dextra верен и при слабом GPS: когда связь возвращается, телефон дописывает трек. Поэтому ${L.cp2} — это потеря связи, а не повод не верить факту.`);
+  notes.push(`КТ3 — факт Dextra сверяется с IMG в окне маршрута: расхождение в любую сторону больше ${cfg('cp3_diff_km') ?? '—'} км и больше ${pct(cfg('cp3_diff_share'))} — нарушение. IMG больше — машина ездила не по маршруту; IMG меньше — Dextra дорисовала км при слабой связи или молчал трекер IMG. Без отчёта IMG проверить нельзя.`);
   const fix = settings.dextra_return_fix_date;
   if (fix && loaded && loaded.from < fix) notes.push(`До ${ruDate(fix)} Dextra не считала обратную дорогу на склад: факт за эти дни занижен, и «факт меньше плана» — не экономия.`);
   $('note-sum').textContent = notes.join(' ');
@@ -900,87 +931,85 @@ function renderAnomalies(){
   put('tbl-anom', table(cols, rows, { onClick:r => showRoute(r.route_id), canClick:r => !!r.route_id,
     empty:'Аномалий нет', emptyHint:'Или период целиком в обкатке или в выходных.' }));
   csvTables.anom = { cols, rows, file:fileName('anomalii') };
-  put('tbl-anom-legend', table([
-    { t:'Код', v:r => r.code, mono:true }, { t:'Правило', v:r => r.title }, { t:'Что значит', v:r => r.description },
-  ], Object.values(rules), { empty:'Описания правил не загрузились' }));
 }
 
-function renderDrivers(){
-  const inStats = statsFilter();
-  const covMin = cfg('a6_coverage_min');
-  const a12 = cfg('a12_min_legs');
-  const rows = [...groupBy(routes, r => r.courier_id || r.courier_name)].map(([, rs]) => {
-    const a = withUnrouted(aggregate(rs, inStats), x => x.courier_name === rs[0].courier_name);
-    return { name:rs[0].courier_name, city:cityName(rs[0].city), plates:[...new Set(rs.map(r => r.plate).filter(Boolean))].join(', '), ...a };
-  }).filter(r => r.routes > 0)
-    .sort((x, y) => (y.an1 - x.an1) || (y.an2 - x.an2) || byText(x.name, y.name));
-  const cols = [
-    { t:'Покрытие GPS', v:r => r.coverage, num:true, f:v => v === null ? '—' : int(v) + '%', bad:r => covMin !== null && r.coverage !== null && r.coverage < covMin },
-    { t:'Водитель', v:r => r.name },
-    { t:'Город', v:r => r.city },
-    { t:'Машина', v:r => r.plates, mono:true },
-    { t:'Маршрутов', v:r => r.routes, num:true, f:int },
-    { t:'План, км', v:r => r.plan, num:true, f:km },
-    { t:'Факт GPS, км', v:r => r.gps, num:true, f:km },
-    { t:'Факт / план', v:r => r.ratio, num:true, f:pct, weak:r => r.covRoutes === 0, title:r => `по ${r.covRoutes} из ${r.routes} маршрутов с покрытием ≥ ${covMin ?? '—'}%` },
-    { t:'Закрыто', v:r => r.closedShare, num:true, f:pct },
-    { t:'Вне очереди', v:r => r.oooShare, num:true, f:pct },
-    { t:'Невозм. переезды', v:r => r.impossible, num:true, f:int, bad:r => a12 !== null && r.impossible >= a12 },
-    { t:'Закрыто поздно', v:r => r.late, num:true, f:int, bad:r => r.late > 0 },
-    { t:'День, ч', v:r => r.hours, num:true, f:v => v === null ? '—' : nf1.format(v) },
-    { t:'Вне маршрута, км', v:r => r.outsideKm, num:true, f:km, bad:r => r.outsideKm > 0, title:r => `по ${r.imgRoutes} маршрутам с отчётом IMG` },
-    { t:'Аномалий выс. / сред.', v:r => r.an1 + ' / ' + r.an2, num:true },
-  ];
-  put('tbl-drv', table(cols, rows));
-  csvTables.drv = { cols, rows, file:fileName('voditeli') };
-}
-
-function routeFlags(r){
-  const out = [];
-  if (r.is_break_in) out.push(['обкатка', '']);
-  if (r.is_day_off) out.push(['выходной', '']);
-  if (r.is_void) out.push(['нет закрытых', 'bad']);
-  if (r.before_return_fix) out.push(['без возврата', '']);
-  for (const a of anomaliesByRoute.get(r.route_id) || []){
-    if (a.severity <= 2) out.push([a.code, a.severity === 1 ? 'bad' : 'warn']);
-  }
-  return out;
-}
 const flagNodes = list => list.map(([t, c]) => chip(t, c));
 
-function renderRoutes(){
-  const covMin = cfg('a6_coverage_min');
-  const lowCov = r => covMin === null || n(r.coverage_pct) === null || n(r.coverage_pct) < covMin;
+/* ============ детализация: день → город → водители ============ */
+/* отметка КТ маршрута: ✓ / ✗ / –, подсказка — чем подтверждено */
+function cpMark(r, k){
+  const s = cpOf(r, k), [sym, cls, word] = CP_STATE[s];
+  const why = {
+    cp1:s !== 'na' ? `факт ${km(n(r.gps_km))} / план ${km(n(r.plan_km))} км = ${pct(n(r.gps_plan_ratio))}` : 'нет плана или факта км',
+    cp2:`покрытие GPS ${n(r.coverage_pct) === null ? 'нет данных' : int(n(r.coverage_pct)) + '%'}`,
+    cp3:s === 'na' || !r.img ? 'нет отчёта IMG или факта Dextra'
+      : `IMG ${km(n(r.img.img_km_window))} км, факт Dextra ${km(n(r.img.dextra_ref_km))} км, разница ${signedKm(n(r.img.outside_km))}`,
+  }[k];
+  /* до исправления Dextra факт без дороги на склад: «норма» по КТ1 там слабее */
+  const weak = k === 'cp1' && s === 'ok' && r.before_return_fix;
+  const text = `${word}: ${why}` + (weak ? ' (факт без дороги на склад)' : '');
+  return h('span', { class:'cp ' + cls, title:text, role:'img', 'aria-label':`${CP_NAMES[k]} — ${text}` }, sym + (weak ? '*' : ''));
+}
+const cpWord = (r, k) => CP_STATE[cpOf(r, k)][2];
+
+function driversTable(rs){
+  const rows = [...rs].sort((x, y) => (routeFails(y) - routeFails(x)) || byText(x.courier_name, y.courier_name));
   const cols = [
-    { t:'Дата', v:r => ruDate(r.route_date), mono:true },
-    { t:'Город', v:r => cityName(r.city) },
     { t:'Водитель', v:r => r.courier_name },
     { t:'Машина', v:r => r.plate, mono:true },
     { t:'План, км', v:r => n(r.plan_km), num:true, f:km },
     { t:'Факт GPS, км', v:r => n(r.gps_km), num:true, f:km },
-    { t:'Факт / план', v:r => n(r.gps_plan_ratio), num:true, f:pct, weak:lowCov },
-    { t:'Покрытие', v:r => n(r.coverage_pct), num:true, f:v => v === null ? '—' : int(v) + '%', bad:lowCov },
-    { t:'Точки', v:r => `${r.closed}/${r.deliveries - r.cancelled}`, num:true },
-    { t:'Окно дня', v:r => r.win_start && r.win_end ? `${tm(r.win_start, r.route_date)}–${tm(r.win_end, r.route_date)}` : '—', mono:true },
-    { t:'IMG в окне, км', v:r => r.img && r.img.img_loaded ? n(r.img.img_km_window) : null, num:true, f:km },
-    { t:'Вне маршрута, км', v:r => r.img && r.img.img_loaded && r.win_end ? n(r.img.outside_km) : null, num:true, f:km,
-      bad:r => !!(r.img && r.img.img_loaded && n(r.img.outside_km) > 0) },
-    { t:'Флаги', v:r => routeFlags(r).map(x => x[0]).join(' '), f:(v, r) => flagNodes(routeFlags(r)) },
+    { t:'Факт / план', v:r => n(r.gps_plan_ratio), num:true, f:pct, bad:r => cpOf(r, 'cp1') === 'fail' },
+    { t:'GPS', v:r => n(r.coverage_pct), num:true, f:v => v === null ? '—' : int(v) + '%', bad:r => cpOf(r, 'cp2') === 'fail' },
+    { t:'IMG − Dextra, км', v:r => r.img && r.img.img_loaded && !r.img.dextra_ref_is_plan && r.win_end ? n(r.img.outside_km) : null, num:true, f:signedKm,
+      bad:r => cpOf(r, 'cp3') === 'fail', title:() => 'факт IMG минус факт Dextra в окне маршрута' },
+    ...CP_KEYS.map((k, i) => ({ t:'КТ' + (i + 1), v:r => cpWord(r, k), f:(v, r) => cpMark(r, k) })),
   ];
-  put('tbl-rt', table(cols, routes, { onClick:r => showRoute(r.route_id), selected:r => r.route_id === openRoute }));
-  csvTables.rt = { cols, rows:routes, file:fileName('marshruty') };
+  return table(cols, rows, { onClick:r => showRoute(r.route_id), selected:r => r.route_id === openRoute, rowKey:r => r.route_id });
+}
+
+function renderDetail(){
+  const inStats = statsFilter();
+  const days = [...groupBy(routes.filter(inStats), r => r.route_date + '|' + r.city)].map(([key, rs]) =>
+    ({ key, date:rs[0].route_date, city:cityName(rs[0].city), rs, ...aggregate(rs, () => true) }));
+  const byDate = (a, b) => byText(b.date, a.date);
+  const byFails = (a, b) => b.failRoutes - a.failRoutes;
+  days.sort(detSort === 'fails'
+    ? (a, b) => byFails(a, b) || byDate(a, b) || byText(a.city, b.city)
+    : (a, b) => byDate(a, b) || byFails(a, b) || byText(a.city, b.city));
+  if (openDay && !days.some(d => d.key === openDay)) openDay = null;
+  const L = cpLabels();
+  const cols = [
+    { t:'Дата', v:r => ruDate(r.date), mono:true, f:(v, r) => (r.key === openDay ? '▾ ' : '▸ ') + v },
+    { t:'Город', v:r => r.city },
+    ...kmCols(L),
+  ];
+  put('tbl-det', table(cols, days, {
+    onClick:r => { openDay = openDay === r.key ? null : r.key; renderDetail(); refocus('tbl-det', r.key); },
+    expand:r => r.key === openDay ? driversTable(r.rs) : null,
+    rowKey:r => r.key,
+    empty:'Маршрутов в статистике нет', emptyHint:'Попробуйте другой период или город — или период целиком в обкатке или в выходных.',
+  }));
+  csvTables.det = { cols, rows:days, file:fileName('detalizaciya') };
+  $('note-det').textContent = 'Нажмите на строку — откроются водители города за этот день; на водителя — карточка маршрута. ' +
+    'В колонках КТ — нарушений / проверено; у водителя: ✓ норма, ✗ нарушение, – проверить нельзя (наведите, чтобы увидеть почему).';
   if (!openRoute) $('route-detail').replaceChildren();
 }
 
 /* ============ один маршрут ============ */
-function closeRoute(){ openRoute = null; detailSeq++; renderRoutes(); }
+function closeRoute(){ openRoute = null; detailSeq++; renderDetail(); }
 
 async function showRoute(routeId, opts){
   openRoute = routeId;
-  if (!(opts && opts.keepTab)) selectTab('t-rt');
-  renderRoutes();
   const r = routes.find(x => x.route_id === routeId);
-  if (!r) return;
+  const keepTab = !!(opts && opts.keepTab);
+  /* строка его дня раскрывается, чтобы было видно, откуда карточка; при перезагрузке
+     данных (keepTab) раскрытие остаётся таким, каким его оставил пользователь */
+  if (r && !keepTab) openDay = r.route_date + '|' + r.city;
+  if (!keepTab) selectTab('t-det');
+  renderDetail();
+  if (!r){ $('route-detail').replaceChildren(); return; }
+  if (!keepTab) refocus('tbl-det', routeId);
   const seq = ++detailSeq;
   const box = $('route-detail');
   box.replaceChildren(emptyBox('Загружаю точки маршрута…'));
@@ -1086,18 +1115,22 @@ function pointRows(r, acts){
 }
 
 function routeDetail(r, acts, trips){
-  const covMin = cfg('a6_coverage_min');
+  const covMin = cfg('cp2_coverage_min');
   const lowCov = covMin !== null && (n(r.coverage_pct) === null || n(r.coverage_pct) < covMin);
   const im = r.img && r.img.img_loaded ? r.img : null;
   const outside = im && r.win_end ? n(im.outside_km) : null;
   const head = h('div', { class:'bar', style:'margin-top:8px' },
     h('h2', null, `${r.courier_name || 'Водитель не указан'} · ${cityName(r.city)} · ${ruDate(r.route_date)} · ${r.plate || 'без номера'}`),
     h('button', { class:'btn', onclick:closeRoute }, 'Закрыть'));
+  const cps = h('p', null, ...CP_KEYS.map(k => {
+    const s = cpOf(r, k);
+    return chip(`${CP_NAMES[k]}: ${CP_STATE[s][2]}`, s === 'fail' ? 'bad' : s === 'ok' ? 'info' : 'sev3');
+  }));
   const kp = h('div', { class:'kpis' },
     kpiCard(km(n(r.plan_km)), 'План Dextra, км'),
     kpiCard(km(n(r.gps_km)), 'Факт GPS Dextra, км'),
     kpiCard(im ? km(n(im.img_km_window)) : '—', im ? `Факт IMG в окне дня, км (за сутки ${km(n(im.img_km_day))})` : 'Факт IMG — отчёт не загружен'),
-    kpiCard(outside === null ? '—' : km(outside), 'Км вне маршрута', outside > 0 ? 'danger' : null),
+    kpiCard(signedKm(outside), 'IMG − факт Dextra, км', cpOf(r, 'cp3') === 'fail' ? 'danger' : null),
     kpiCard(n(r.coverage_pct) === null ? '—' : int(n(r.coverage_pct)) + '%', 'Покрытие GPS', lowCov ? 'danger' : null),
     kpiCard(`${r.closed}/${r.deliveries - r.cancelled}`, 'Точек закрыто', r.open > 0 ? 'warning' : null),
     kpiCard(r.win_start && r.win_end ? `${tm(r.win_start, r.route_date)}–${tm(r.win_end, r.route_date)}` : '—',
@@ -1106,14 +1139,12 @@ function routeDetail(r, acts, trips){
   const notes = [];
   if (r.is_break_in) notes.push('День в периоде обкатки Dextra — в статистику не идёт.');
   if (r.is_day_off) notes.push('Выходной день (воскресенье или суббота вне высокого сезона) — в статистику и аномалии не идёт.');
-  if (r.before_return_fix) notes.push('До исправления Dextra не считала обратную дорогу на склад: факт GPS занижен на возврат.');
-  if (lowCov) notes.push(`Покрытие GPS ниже ${covMin}% — факт км недоказуем.`);
+  if (r.before_return_fix) notes.push('До исправления Dextra не считала обратную дорогу на склад: факт меньше плана на возврат. Сверка с IMG честная — окно маршрута тоже кончается на последней точке.');
+  if (lowCov) notes.push(`Покрытие GPS ниже ${covMin}% — телефон водителя терял связь; факт км при этом верен.`);
   if (im){
-    notes.push(`Км вне маршрута = IMG в окне дня ${km(n(im.img_km_window))} − ${im.dextra_ref_is_plan ? 'план' : 'факт'} Dextra ${km(n(im.dextra_ref_km))}` +
-      (n(im.return_est_km) > 0 ? ` − ~${km(n(im.return_est_km))} км оценки дороги на склад` : '') + '.');
-    if (n(im.img_gap_min_window) > 0) notes.push(`Трекер IMG молчал в окне дня ${int(n(im.img_gap_min_window))} мин — IMG мог недосчитать.`);
-    if (outside !== null && outside < 0) notes.push('Отрицательное значение — IMG насчитал меньше Dextra: обычно это дыры трекера IMG; в итоги «вне маршрута» такие дни идут нулём.');
-    if (im.return_est_missing) notes.push('Оценку дороги на склад посчитать не из чего (нет координат склада или точек) — «вне маршрута» может быть завышено.');
+    notes.push(`IMG − Dextra = IMG в окне маршрута ${km(n(im.img_km_window))} − ${im.dextra_ref_is_plan ? 'план (факта нет)' : 'факт'} Dextra ${km(n(im.dextra_ref_km))}.`);
+    if (n(im.img_gap_min_window) > 0) notes.push(`Трекер IMG молчал в окне маршрута ${int(n(im.img_gap_min_window))} мин — IMG мог недосчитать.`);
+    if (outside !== null && outside < 0) notes.push('IMG насчитал меньше Dextra: Dextra дорисовала км при слабой связи или молчал трекер IMG. В итог «вне маршрута» такие дни идут нулём.');
   }
   const an = anomaliesByRoute.get(r.route_id) || [];
   const anTbl = an.length ? h('div', { class:'tbl' }, table([
@@ -1135,7 +1166,7 @@ function routeDetail(r, acts, trips){
     { t:'Простой до выезда, мин', v:p => p.idle, num:true, f:v => v === null ? '—' : int(v) },
     { t:'Флаги', v:p => p.flags.map(x => x[0]).join(' '), f:(v, p) => flagNodes(p.flags) },
   ];
-  return [head, kp,
+  return [head, cps, kp,
     notes.length ? h('p', { class:'msg info' }, notes.join(' ')) : null,
     anTbl,
     h('p', { class:'note' }, 'Точки в порядке фактического закрытия; незакрытые и отменённые — в конце. «Переезд» и «скорость» — по прямой между плановыми координатами соседних закрытых точек.'),
@@ -1334,10 +1365,13 @@ function renderSettings(){
   put('tbl-cfg', table([
     { t:'Параметр', v:x => x.key, mono:true }, { t:'Значение', v:x => x.value, mono:true }, { t:'Что значит', v:x => x.note },
   ], settingRows));
+  put('tbl-anom-legend', table([
+    { t:'Код', v:r => r.code, mono:true }, { t:'Правило', v:r => r.title }, { t:'Что значит', v:r => r.description },
+  ], Object.values(rules), { empty:'Описания правил не загрузились' }));
 }
 
 /* ============ разделы (боковая панель) ============ */
-const TABS = ['t-sum', 't-anom', 't-drv', 't-rt', 't-sync', 't-cfg'];
+const TABS = ['t-sum', 't-det', 't-anom', 't-sync', 't-cfg'];
 function selectTab(id){
   for (const t of TABS){
     const on = t === id;
@@ -1399,19 +1433,21 @@ async function signOut(reason){
   /* на общем компьютере следующий вошедший не должен увидеть чужие данные */
   loadSeq++; detailSeq++;
   settings = {}; settingRows = []; rules = {}; routes = []; anomalies = []; syncLog = [];
-  anomaliesByRoute = new Map(); loaded = null; openRoute = null;
+  anomaliesByRoute = new Map(); loaded = null; openRoute = null; openDay = null;
   aliasMap = new Map(); imgLoads = []; imgDraft = []; knownVehicles = null;
   $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');
   ['tbl-img-preview', 'tbl-img-loads'].forEach(id => $(id).replaceChildren());
   for (const k of Object.keys(csvTables)) delete csvTables[k];
-  ['kpis', 'tbl-sum', 'tbl-anom', 'tbl-anom-legend', 'tbl-drv', 'tbl-rt', 'route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg']
+  ['kpis', 'tbl-sum', 'tbl-det', 'tbl-anom', 'tbl-anom-legend', 'route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg']
     .forEach(id => $(id).replaceChildren());
-  $('note-sum').textContent = '';
+  $('note-sum').textContent = ''; $('note-det').textContent = '';
   say('msg', '');
   conn('', '');
   /* следующий вошедший начинает со сводки, а не с чужой вкладки */
-  sevFilter = 2;
-  setPressed('f-sev', b => b.dataset.sev === '2');
+  sevFilter = 1;
+  setPressed('f-sev', b => b.dataset.sev === '1');
+  detSort = 'date';
+  setPressed('f-sort', b => b.dataset.sort === 'date');
   selectTab('t-sum');
   showLogin(true);
   if (reason) say('msg-login', reason, 'err');
@@ -1442,6 +1478,12 @@ $('f-sev').addEventListener('click', e => {
   sevFilter = Number(b.dataset.sev);
   setPressed('f-sev', x => x === b);
   try { renderAnomalies(); } catch(err){ say('msg', err.message, 'err'); }
+});
+$('f-sort').addEventListener('click', e => {
+  const b = e.target.closest('.pill'); if (!b) return;
+  detSort = b.dataset.sort;
+  setPressed('f-sort', x => x === b);
+  try { renderDetail(); } catch(err){ say('msg', err.message, 'err'); }
 });
 document.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => downloadCsv(b.dataset.csv)));
 $('img-pick').addEventListener('click', () => $('img-files').click());

@@ -108,7 +108,10 @@
   .msg.info{display:block;background:var(--warning-bg);color:var(--warning-fg)}
 
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
-  .kpi{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow-card)}
+  /* подпись бывает в одну, две или три строки — значение прижато к низу, чтобы цифры
+     соседних карточек стояли на одной линии */
+  .kpi{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow-card);display:flex;flex-direction:column}
+  .kpi b{margin-top:auto}
   .kpi span{display:block;font-size:12px;color:var(--muted-fg);font-weight:500;margin-bottom:6px;letter-spacing:-.01em}
   .kpi b{display:block;font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
   .kpi.click{cursor:pointer;transition:box-shadow .15s}
@@ -258,6 +261,7 @@
             <button class="pill" data-cp="cp1" aria-pressed="true">КТ1</button>
             <button class="pill" data-cp="cp2" aria-pressed="false">КТ2</button>
             <button class="pill" data-cp="cp3" aria-pressed="false">КТ3</button>
+            <button class="pill" data-cp="cp4" aria-pressed="false">КТ4</button>
           </div>
           <button class="btn" data-csv="cp">
             <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
@@ -324,11 +328,11 @@ const SEV_NAMES  = { 1:'высокая', 2:'средняя', 3:'инфо' };
 const REQUIRED_SETTINGS = ['a6_coverage_min', 'a7_quick_close_sec', 'a8_batch_points', 'a9_idle_min',
   'a11_ratio_min', 'a12_min_km', 'a12_min_legs', 'a12_speed_kmh', 'day_end_ceiling', 'day_start_floor',
   'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to',
-  'cp1_ratio_max', 'cp2_coverage_min', 'cp3_diff_km', 'cp3_diff_share'];
+  'cp1_ratio_max', 'cp2_coverage_min', 'cp3_diff_km', 'cp3_diff_share', 'cp4_outside_km'];
 /* контрольные точки маршрута (статусы считает v_route_checks): символ, класс, словом */
-const CP_KEYS = ['cp1', 'cp2', 'cp3'];
+const CP_KEYS = ['cp1', 'cp2', 'cp3', 'cp4'];
 const CP_STATE = { ok:['✓', 'ok', 'норма'], fail:['✗', 'fail', 'нарушение'], na:['–', 'na', 'проверить нельзя'] };
-const CP_NAMES = { cp1:'КТ1 план / факт', cp2:'КТ2 GPS', cp3:'КТ3 сверка с IMG' };
+const CP_NAMES = { cp1:'КТ1 план / факт', cp2:'КТ2 GPS', cp3:'КТ3 сверка с IMG', cp4:'КТ4 вне маршрута' };
 
 /* ============ хранилище (только этот браузер) ============ */
 const local = (() => {
@@ -780,7 +784,7 @@ async function loadData(){
       apiAll(`v_route_img?select=*&${range}&order=route_date.desc,route_id`),
       api('vehicle_aliases?select=alias_key,plate_key,note&order=alias_key'),
       api('img_loads?select=*&order=id.desc&limit=300'),
-      apiAll(`v_route_checks?select=route_id,cp1,cp2,cp3&${range}&order=route_id`),
+      apiAll(`v_route_checks?select=route_id,cp1,cp2,cp3,cp4&${range}&order=route_id`),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
@@ -839,19 +843,19 @@ function aggregate(rows, inStats){
     bothRoutes:both.length,
     plan:sum(both, r => r.plan_km), gps:sum(both, r => r.gps_km),
     ratio:sum(withPlan, r => r.plan_km) ? sum(withPlan, r => r.gps_km) / sum(withPlan, r => r.plan_km) : null,
-    cp1:cp('cp1'), cp2:cp('cp2'), cp3:cp('cp3'),
+    ...Object.fromEntries(CP_KEYS.map(k => [k, cp(k)])),
     failRoutes:st.filter(r => routeFails(r) > 0).length,
     ...imgAggregate(st),
   };
 }
-/* IMG: только маршруты, по которым отчёт загружен и окно дня известно.
-   «Вне маршрута» — сумма превышений: где IMG насчитал меньше Dextra, это дыры трекера,
-   а не экономия, и вычитать их из чужих превышений нельзя. */
+/* «Вне маршрута» — км IMG сверх факта Dextra по маршрутам, нарушившим КТ4 (ниже порога —
+   шум двух приборов). Где IMG насчитал меньше Dextra, это не экономия, и вычитать такие
+   дни из чужих превышений нельзя. */
 function imgAggregate(st){
-  const withImg = st.filter(r => r.img && r.img.img_loaded && !r.img.dextra_ref_is_plan && r.win_end);
+  const checked = st.filter(r => cpOf(r, 'cp4') !== 'na');
   return {
-    imgRoutes:withImg.length,
-    outsideKm:withImg.length ? withImg.reduce((s, r) => s + Math.max(0, n(r.img.outside_km) || 0), 0) : null,
+    imgRoutes:checked.length,
+    outsideKm:checked.length ? sum(st.filter(r => cpOf(r, 'cp4') === 'fail'), r => r.img.outside_km) : null,
   };
 }
 /* подписи порогов КТ — из настроек, в исходнике страницы их нет */
@@ -861,6 +865,7 @@ function cpLabels(){
     cp1:`КТ1 факт выше плана более чем на ${r === null ? '—' : int((r - 1) * 100)}%`,
     cp2:`КТ2 GPS ниже ${cov ?? '—'}%`,
     cp3:'КТ3 факт Dextra расходится с IMG',
+    cp4:`КТ4 км вне маршрута по IMG (больше ${cfg('cp4_outside_km') ?? '—'} км)`,
     cov,
   };
 }
@@ -906,7 +911,7 @@ function kmCols(L){
     ...CP_KEYS.map(k => cpCol(k, CP_NAMES[k])),
     { t:'С нарушениями', v:r => r.failRoutes, num:true, f:int, bad:r => r.failRoutes > 0, title:() => 'маршрутов, где нарушена хотя бы одна КТ' },
     { t:'Вне маршрута, км', v:r => r.outsideKm, num:true, f:km, bad:r => r.outsideKm > 0,
-      title:r => `сумма превышений IMG над Dextra в окне маршрута, ${r.imgRoutes} маршр. с отчётом IMG` },
+      title:r => `км IMG сверх факта Dextra по маршрутам с нарушением КТ4 (проверено ${r.imgRoutes})` },
   ];
 }
 function cpCard(c, label, k){
@@ -924,8 +929,10 @@ function renderSummary(){
     kpiCard(km(total.plan), 'План, км'),
     kpiCard(km(total.gps), 'Факт GPS Dextra, км'),
     kpiCard(pct(total.ratio), 'Факт / план'),
-    ...CP_KEYS.map(k => cpCard(total[k], L[k], k)),
-    kpiCard(km(total.outsideKm), `Км вне маршрута по IMG (${int(total.imgRoutes)} маршр.)`, total.outsideKm > 0 ? 'warning' : null),
+    ...['cp1', 'cp2', 'cp3'].map(k => cpCard(total[k], L[k], k)),
+    /* КТ4 — километры, а не число маршрутов: так видно, сколько наездили не по маршруту */
+    kpiCard(km(total.outsideKm), `${L.cp4} · ${int(total.cp4.fail)} маршр. из ${int(total.cp4.checked)}`,
+      total.cp4.fail ? 'danger' : total.cp4.checked ? 'success' : null, () => openCp('cp4')),
   );
 
   const cols = [{ t:'Город', v:r => r.key }, ...kmCols(L)];
@@ -938,6 +945,7 @@ function renderSummary(){
   if (excluded) notes.push(`Не вошло в статистику маршрутов: ${excluded} (${$('f-stable').checked ? 'период обкатки, ' : ''}выходной или ни одной закрытой точки).`);
   notes.push(`В колонках КТ — нарушений / проверено. Факт км Dextra верен и при слабом GPS: когда связь возвращается, телефон дописывает трек. Поэтому ${L.cp2} — это потеря связи, а не повод не верить факту.`);
   notes.push(`КТ3 — факт Dextra сверяется с IMG в окне маршрута: расхождение в любую сторону больше ${cfg('cp3_diff_km') ?? '—'} км и больше ${pct(cfg('cp3_diff_share'))} — нарушение. IMG больше — машина ездила не по маршруту; IMG меньше — Dextra дорисовала км при слабой связи или молчал трекер IMG. Без отчёта IMG проверить нельзя.`);
+  notes.push(`${L.cp4} — IMG насчитал больше факта Dextra; меньшие расхождения — шум двух приборов. «Вне маршрута, км» — сумма этих превышений.`);
   const fix = settings.dextra_return_fix_date;
   if (fix && loaded && loaded.from < fix) notes.push(`До ${ruDate(fix)} Dextra не считала обратную дорогу на склад: факт за эти дни занижен, и «факт меньше плана» — не экономия.`);
   $('note-sum').textContent = notes.join(' ');
@@ -973,6 +981,8 @@ function cpMark(r, k){
     cp2:`покрытие GPS ${n(r.coverage_pct) === null ? 'нет данных' : int(n(r.coverage_pct)) + '%'}`,
     cp3:s === 'na' || !r.img ? 'нет отчёта IMG или факта Dextra'
       : `IMG ${km(n(r.img.img_km_window))} км, факт Dextra ${km(n(r.img.dextra_ref_km))} км, разница ${signedKm(n(r.img.outside_km))}`,
+    cp4:s === 'na' || !r.img ? 'нет отчёта IMG или факта Dextra'
+      : n(r.img.outside_km) > 0 ? `вне маршрута ${km(n(r.img.outside_km))} км по IMG` : 'IMG не больше факта Dextra',
   }[k];
   /* до исправления Dextra факт без дороги на склад: «норма» по КТ1 там слабее */
   const weak = k === 'cp1' && s === 'ok' && r.before_return_fix;
@@ -1047,6 +1057,7 @@ function cpWhy(r, k){
   if (k === 'cp2') return `GPS ${covText(r)} — телефон водителя терял связь`;
   const d = imgDiff(r);
   if (d === null) return '—';
+  if (k === 'cp4') return `по IMG проехал на ${km(d)} км больше факта Dextra — не по маршруту`;
   return d > 0 ? `IMG больше на ${km(d)} км — машина ездила не по маршруту`
                : `Dextra больше на ${km(-d)} км — дорисовала км при слабой связи или молчал трекер IMG`;
 }
@@ -1083,6 +1094,17 @@ const CP_COLS = {
     { t:'GPS', v:r => n(r.coverage_pct), num:true, f:v => v === null ? '—' : int(v) + '%' },
     markCol('cp1'),
   ],
+  cp4:[
+    { t:'Вне маршрута, км', v:imgDiff, num:true, f:km, bad:() => true },
+    { t:'Факт Dextra, км', v:r => r.img ? n(r.img.dextra_ref_km) : null, num:true, f:km },
+    { t:'IMG в окне, км', v:r => r.img ? n(r.img.img_km_window) : null, num:true, f:km },
+    { t:'Доля от факта', v:r => { const d = imgDiff(r), ref = r.img && n(r.img.dextra_ref_km); return d === null || !ref ? null : d / ref; },
+      num:true, f:v => v === null ? '—' : '+' + pct(v) },
+    { t:'План, км', v:r => n(r.plan_km), num:true, f:km },
+    { t:'Точек закрыто', v:r => `${r.closed} из ${r.deliveries - r.cancelled}`, num:true },
+    { t:'Окно маршрута', v:r => r.win_start && r.win_end ? `${tm(r.win_start, r.route_date)}–${tm(r.win_end, r.route_date)}` : '—', mono:true },
+    markCol('cp3'),
+  ],
 };
 
 function renderCp(){
@@ -1090,7 +1112,9 @@ function renderCp(){
   const fails = k => st.filter(r => cpOf(r, k) === 'fail');
   const L = cpLabels();
   for (const b of $('f-cp').querySelectorAll('.pill')) b.textContent = `${CP_NAMES[b.dataset.cp]} · ${fails(b.dataset.cp).length}`;
-  const rows = fails(cpView).sort((a, b) => byText(b.route_date, a.route_date) || byText(cityName(a.city), cityName(b.city)) || byText(a.courier_name, b.courier_name));
+  const byDate = (a, b) => byText(b.route_date, a.route_date) || byText(cityName(a.city), cityName(b.city)) || byText(a.courier_name, b.courier_name);
+  /* КТ4 — сначала самые большие километры: видно, из чего сложилась сумма на Своде */
+  const rows = fails(cpView).sort(cpView === 'cp4' ? (a, b) => (imgDiff(b) - imgDiff(a)) || byDate(a, b) : byDate);
   /* в выгрузку — словами (правило и подробности), на экране — коды с подсказкой */
   const anText = r => (anomaliesByRoute.get(r.route_id) || []).map(anomalyText).join('; ');
   const cols = [
@@ -1112,6 +1136,7 @@ function renderCp(){
     cp1:`${L.cp1}. Факт Dextra верен и при слабом GPS; колонка «IMG в окне» и отметка КТ3 показывают, подтверждает ли перепробег независимый трекер IMG.`,
     cp2:`${L.cp2}: телефон водителя терял связь. Факт км при этом верен — трек дописывается, когда связь возвращается.`,
     cp3:`Факт Dextra и IMG в окне маршрута расходятся больше чем на ${cfg('cp3_diff_km') ?? '—'} км и больше чем на ${pct(cfg('cp3_diff_share'))} — в любую сторону.`,
+    cp4:`${L.cp4}: машина по трекеру IMG проехала больше, чем записала Dextra, — эти км проехали не по маршруту. Всего ${km(sum(rows, imgDiff))} км; сначала самые большие.`,
   }[cpView];
   $('note-cp').textContent = `${rule} Нажмите на строку — откроется карточка маршрута; наведите на код аномалии — увидите подробности.`;
   if (!openRoute || routeHost !== 'cp') $('cp-route-detail').replaceChildren();

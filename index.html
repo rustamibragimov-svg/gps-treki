@@ -178,6 +178,7 @@
   .lg.pt{width:12px;height:12px;border-radius:50%}
   .lg.depot{width:12px;height:12px;border-radius:3px;background:var(--side)}
   .lg.far{width:16px;height:12px;border-radius:3px;background:#DC2626}
+  .lg.off{width:18px;border-top:5px solid #DC2626}
   .lg.near{width:10px;height:10px;border-radius:50%;border:2px solid #EA580C;background:#fff}
   .lg.pt.closed,.map-pt.closed{background:#16A34A}
   .lg.pt.open,.map-pt.open{background:#DC2626}
@@ -331,7 +332,7 @@ const CITY_NAMES = { FERGHANA:'Фергана', KOKAND:'Коканд', NAMANGAN:
 /* без них часть проверок молча выключится — страница говорит об этом вслух */
 const REQUIRED_SETTINGS = ['quick_close_sec', 'batch_points', 'idle_min', 'leg_min_km', 'leg_speed_kmh',
   'day_end_ceiling', 'day_start_floor', 'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to',
-  'km_warn', 'km_bad', 'not_visited_m', 'not_visited_points', 'offroute_far_m', 'map_stop_min', 'map_close_far_m'];
+  'km_warn', 'km_bad', 'not_visited_m', 'not_visited_points', 'offroute_far_m', 'offroute_min_km', 'map_stop_min', 'map_close_far_m'];
 /* четыре проверки маршрута (состояния и цифры считает v_route_control) */
 const CHECKS = ['c1', 'c2', 'c3', 'c4'];
 const CHECK_NAMES = { c1:'План ↔ факт Dextra', c2:'Факт Dextra ↔ IMG', c3:'Точки: план ↔ закрыто', c4:'Вне маршрута' };
@@ -896,7 +897,7 @@ function aggregate(rows){
     imgKm:sum(can('c2'), r => ctl(r).img_km), dxForImg:sum(can('c2'), r => n(ctl(r).img_km) - n(ctl(r).c2_diff_km)),
     planned:sum(can('c3'), r => ctl(r).c3_planned), closed:sum(can('c3'), r => ctl(r).c3_closed),
     notVisited:sum(can('c3'), r => ctl(r).c3_not_visited),
-    visits:sum(can('c4'), r => ctl(r).c4_visits),
+    offKm:sum(can('c4'), r => ctl(r).c4_off_km),
     failRoutes:rows.filter(r => routeFails(r) > 0).length,
     ...Object.fromEntries(CHECKS.map(k => [k, checkCounts(rows, k)])),
   };
@@ -907,13 +908,12 @@ function checkRules(){
   return {
     c1:`Факт GPS Dextra минус план, в любую сторону: до ${v('km_warn')} км — норма, до ${v('km_bad')} км — присмотреться, больше — нарушение.`,
     c2:`Км IMG в окне маршрута минус факт Dextra, в любую сторону: до ${v('km_warn')} км — норма, до ${v('km_bad')} км — присмотреться, больше — нарушение.`,
-    c3:`Нарушение: закрыто меньше точек, чем в плане (без отменённых), или от ${v('not_visited_points')} закрытых точек машина по IMG не подъезжала ближе ${v('not_visited_m')} м.`,
-    c4:`Нарушение: в окне маршрута машина по IMG заезжала дальше ${v('offroute_far_m')} м от всех точек маршрута — поездка кончилась не у точки.`,
+    c3:`Нарушение: закрыто меньше точек, чем в плане (без отменённых), или от ${v('not_visited_points')} закрытых точек машина по треку IMG не подъезжала ближе ${v('not_visited_m')} м.`,
+    c4:`Нарушение: машина по треку IMG проехала больше ${v('offroute_min_km')} км дальше ${v('offroute_far_m')} м от плановой дороги Dextra и от всех точек маршрута.`,
   };
 }
 const plural = (x, one, few, many) => { const a = Math.abs(x) % 100, b = a % 10;
   return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many; };
-const visitsWord = x => plural(x, 'заезд', 'заезда', 'заездов');
 /* цифры проверки у одного маршрута — для водителей, нарушителей и карточки */
 function checkText(r, k){
   const c = ctl(r);
@@ -925,8 +925,8 @@ function checkText(r, k){
     /* «из», а не «8/9»: Excel прочёл бы дробь в выгрузке как дату */
     return `${int(n(c.c3_closed))} из ${int(n(c.c3_planned))}` + (nv ? ` · ${int(nv)} без визита` : '');
   }
-  const v = n(c.c4_visits);
-  return v ? `${int(v)} ${visitsWord(v)} · до ${km(n(c.c4_max_km))} км` : 'нет';
+  const off = n(c.c4_off_km);
+  return off ? `${km(off)} км · до ${km(n(c.c4_max_km))} км от дороги` : 'нет';
 }
 function checkCell(r, k){
   const [word, cls] = CHECK_STATE[stateOf(r, k)];
@@ -967,7 +967,7 @@ function checkTile(k, a, rule){
     c1:`план ${km(a.plan)} · факт ${km(a.gps)} км`,
     c2:`Dextra ${km(a.dxForImg)} · IMG ${km(a.imgKm)} км`,
     c3:`закрыто ${int(a.closed)} из ${int(a.planned)} · без визита ${int(a.notVisited)}`,
-    c4:`${int(a.visits)} ${visitsWord(a.visits)} вне маршрута`,
+    c4:`${km(a.offKm)} км вне маршрута`,
   }[k];
   const open = () => openCheck(on ? null : k);
   return h('div', { class:'kpi click check' + (on ? ' on' : ''), role:'button', tabindex:'0', title:rule,
@@ -1005,7 +1005,7 @@ const SEVERITY = {
   c1:r => Math.abs(n(ctl(r).c1_diff_km) || 0),
   c2:r => Math.abs(n(ctl(r).c2_diff_km) || 0),
   c3:r => (n(ctl(r).c3_planned) || 0) - (n(ctl(r).c3_closed) || 0) + (n(ctl(r).c3_not_visited) || 0),
-  c4:r => (n(ctl(r).c4_visits) || 0) * 1000 + (n(ctl(r).c4_max_km) || 0),
+  c4:r => n(ctl(r).c4_off_km) || 0,
 };
 function renderViolators(st, R){
   const k = focusCheck;
@@ -1098,14 +1098,16 @@ async function showRoute(routeId, opts){
   dropRouteMap();   // блок прежней карты сейчас уйдёт со страницы
   box.replaceChildren(emptyBox('Загружаю точки маршрута…'));
   try {
-    const [acts, trips] = await Promise.all([
+    const [acts, trips, geo] = await Promise.all([
       api(`dx_actions?select=*&route_id=eq.${q(routeId)}&order=completed_at.asc.nullslast,planned_at.asc.nullslast,action_id`),
       /* без поездок IMG карточка всё равно нужна — сбой здесь не прячет точки */
       dayTrips(r).catch(e => ({ error:e.message })),
+      /* плановая дорога и трек машины — сбой не прячет точки, карта рисуется по поездкам */
+      api('rpc/route_map', { method:'POST', body:{ p_route_id:routeId } }).catch(e => ({ error:e.message })),
     ]);
     if (seq !== detailSeq) return;
     const points = pointRows(r, acts);
-    const map = safeRouteMapBlock(r, points, acts, trips);
+    const map = safeRouteMapBlock(r, points, acts, trips, geo);
     box.replaceChildren(...routeDetail(r, points, trips, map.nodes));
     map.mount(seq);
     if (!(opts && opts.keepTab)) box.scrollIntoView({ behavior:'smooth', block:'start' });
@@ -1226,7 +1228,7 @@ function routeDetail(r, points, trips, mapNodes){
     /* IMG есть, а проверка 4 невозможна — объяснить, иначе «—» выглядит как сбой */
     if (stateOf(r, 'c4') === 'na') notes.push(!r.win_start || !r.win_end
       ? 'Нет окна маршрута — проверка 4 и «без визита» не проверены.'
-      : 'У части поездок IMG в окне маршрута нет координат или у точек маршрута нет координат — проверка 4 и «без визита» не проверены. Перезагрузите отчёт IMG за эту дату на вкладке «Загрузка».');
+      : 'Нет трека машины IMG за окно маршрута или плановой дороги Dextra — проверка 4 не проверена (трек и дорога грузятся каждый вечер; за прошлые дни — разовой загрузкой).');
   }
   const cols = [
     { t:'№ факт', v:p => p.factNo, num:true },
@@ -1287,7 +1289,7 @@ const LEAFLET_CSS = { url:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/
 const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 /* цвета линий Leaflet задаются атрибутами SVG — var(--…) там не работает */
-const MAP_COLOR = { plan:'#2563EB', img:'#EA580C', imgOut:'#94A3B8' };
+const MAP_COLOR = { plan:'#2563EB', img:'#EA580C', imgOut:'#94A3B8', off:'#DC2626' };
 const MAP_DEFAULT_VIEW = [40.7, 71.3];   // Ферганская долина — если рисовать нечего
 let leafletReady = null, leafletLoaded = false;   // loaded — и скрипт, и стили: без стилей карта рассыпается
 let routeMap = null;   // { map, fit } — открытая карта и «уложить в кадр, когда блок виден»
@@ -1412,10 +1414,15 @@ function imgPositionAt(list, ms){
 const nearName = p => !p ? '—' : p.a ? (p.a.type === 'start' ? 'склад (старт)' : 'склад (финиш)')
   : `${p.row.planNo !== null ? '№ ' + p.row.planNo + ' · ' : ''}${p.row.a.address || p.row.a.label || 'точка'}`;
 
-function routeMapBlock(r, points, acts, trips){
+/* geo — ответ rpc/route_map: { plan, track, off[] } (GeoJSON); { error } или пусто — карта по поездкам */
+function routeMapBlock(r, points, acts, trips, geo){
   const title = h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, 'Карта: план Dextra и путь машины по IMG'));
   const d = routeMapData(r, points, acts, trips);
+  const g = geo && !geo.error ? geo : {};
+  const road = !!g.plan, track = !!g.track;
+  const offParts = road && track && Array.isArray(g.off) ? g.off : [];
   const notes = [];
+  if (geo && geo.error) notes.push('Плановая дорога и трек машины не загрузились — карта по поездкам IMG: ' + geo.error);
   if (trips && trips.error) notes.push('Поездки IMG не загрузились — на карте только точки Dextra.');
   else if (!trips) notes.push('Номер машины не распознан — поездок IMG на карте нет.');
   else if (!trips.length) notes.push('Поездок IMG за этот день нет: отчёт не загружен или машина не ездила.');
@@ -1423,21 +1430,21 @@ function routeMapBlock(r, points, acts, trips){
   if (!d.stopsConfigured) notes.push('Нет настроек map_stop_min / offroute_far_m — стоянки и заезды IMG не показаны.');
   if (d.closeFarM === null) notes.push('Нет настройки map_close_far_m — точки, закрытые вдали от машины, не отмечены.');
   const note = notes.length ? h('p', { class:'msg info' }, notes.join(' ')) : null;
-  if (!d.plan.length && !d.segs.length){
+  if (!d.plan.length && !d.segs.length && !road && !track){
     return { nodes:[title, note, emptyBox('Рисовать нечего', 'Нет координат ни у точек Dextra, ни у поездок IMG.')], mount:() => {} };
   }
 
   const outside = d.segs.filter(s => !s.inWin);
   const outBox = outside.length ? h('input', { type:'checkbox' }) : null;
   const legend = h('div', { class:'map-legend' },
-    h('span', null, h('i', { class:'lg plan' }), 'план Dextra'),
+    h('span', null, h('i', { class:'lg plan' }), road ? 'плановая дорога Dextra' : 'план Dextra (по прямой)'),
     h('span', null, h('i', { class:'lg pt closed' }), 'закрыта'),
     h('span', null, h('i', { class:'lg pt closed away' }), 'закрыта вдали от машины'),
     h('span', null, h('i', { class:'lg pt open' }), 'не закрыта'),
     h('span', null, h('i', { class:'lg pt cancelled' }), 'отменена'),
     h('span', null, h('i', { class:'lg depot' }), 'склад'),
-    h('span', null, h('i', { class:'lg img' }), d.hasWin ? 'поездка IMG в окне дня' : 'поездка IMG'),
-    h('span', null, h('i', { class:'lg far' }), 'заезд вне маршрута'),
+    h('span', null, h('i', { class:'lg img' }), track ? 'путь машины по IMG' : d.hasWin ? 'поездка IMG в окне дня' : 'поездка IMG'),
+    track && road ? h('span', null, h('i', { class:'lg off' }), 'вне маршрута') : h('span', null, h('i', { class:'lg far' }), 'заезд вне маршрута'),
     h('span', null, h('i', { class:'lg near' }), 'стоянка IMG у точки'));
   const opt = outBox ? h('label', { class:'map-opt' }, outBox, ` поездки IMG вне окна дня (${outside.length})`) : null;
   const el = h('div', { class:'map', role:'region', 'aria-label':'Карта маршрута' }, h('p', { class:'note map-wait' }, 'Загружаю карту…'));
@@ -1451,8 +1458,20 @@ function routeMapBlock(r, points, acts, trips){
     { t:'Ближайшая точка Dextra', v:s => nearName(s.near) },
     { t:'До неё, км', v:s => s.distM === null ? null : s.distM / 1000, num:true, f:v => v === null ? '—' : nf1.format(v) },
   ];
+  /* есть трек и плановая дорога — вне маршрута считается по ним (проверка 4), участки с временем */
+  const offCols = [
+    { t:'С', v:x => tm(x.from, r.route_date), mono:true },
+    { t:'По', v:x => tm(x.to, r.route_date), mono:true },
+    { t:'Км', v:x => n(x.km), num:true, f:km },
+    { t:'До X км от дороги', v:x => n(x.max_km), num:true, f:km },
+  ];
+  const offPart = road && track ? [
+    h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, `Вне маршрута: участки — ${offParts.length}`)),
+    h('p', { class:'note' }, `Машина по треку IMG была дальше ${int(cfg('offroute_far_m'))} м от плановой дороги Dextra и от всех точек маршрута.`),
+    h('div', { class:'tbl' }, table(offCols, offParts, { empty:'Вне маршрута не ездил', emptyHint:'Весь путь машины в окне маршрута — у плановой дороги или точек.' })),
+  ] : [];
   /* без поездок IMG с координатами судить не о чем — пустая таблица выглядела бы как «всё чисто» */
-  const stopsPart = !d.stopsConfigured || !d.segs.length ? [] : [
+  const stopsPart = road && track || !d.stopsConfigured || !d.segs.length ? [] : [
     h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, `Заезды вне маршрута — ${far.length}`)),
     h('p', { class:'note' }, `Поездка IMG кончилась дальше ${int(d.farM)} м от всех точек маршрута и склада${d.hasWin ? ', в окне маршрута' : ''}, сколько бы машина там ни стояла.`),
     h('div', { class:'tbl' }, table(stopCols, far, { empty:'Заездов вне маршрута нет', emptyHint:'Все остановки машины — у точек маршрута или склада.' })),
@@ -1472,10 +1491,12 @@ function routeMapBlock(r, points, acts, trips){
   ];
   return {
     nodes:[title, note, h('div', { class:'bar' }, legend, opt), el,
-      h('p', { class:'note' }, 'Номер на точке — порядок в плане Dextra. Отрезки IMG — прямая от начала до конца поездки, не дорога. Наведите на точку, отрезок или стоянку — подробности.'),
-      ...awayPart, ...stopsPart].filter(Boolean),
+      h('p', { class:'note' }, 'Номер на точке — порядок в плане Dextra. ' +
+        (track ? 'Оранжевая линия — путь машины по трекеру IMG в окне маршрута. ' : 'Отрезки IMG — прямая от начала до конца поездки, не дорога. ') +
+        'Наведите на точку, линию или стоянку — подробности.'),
+      ...offPart, ...awayPart, ...stopsPart].filter(Boolean),
     mount:seq => loadLeaflet()
-      .then(L => { if (seq === detailSeq && el.isConnected) drawRouteMap(L, el, d, outBox, r.route_date); })
+      .then(L => { if (seq === detailSeq && el.isConnected) drawRouteMap(L, el, d, outBox, r.route_date, { ...g, off:offParts }); })
       .catch(e => {
         if (seq !== detailSeq) return;
         dropRouteMap();   // сбой посреди рисования не должен оставить полкарты в памяти
@@ -1485,17 +1506,18 @@ function routeMapBlock(r, points, acts, trips){
 }
 
 /* карточка без карты, если её данные не собрались: точки и поездки важнее */
-function safeRouteMapBlock(r, points, acts, trips){
-  try { return routeMapBlock(r, points, acts, trips); }
+function safeRouteMapBlock(r, points, acts, trips, geo){
+  try { return routeMapBlock(r, points, acts, trips, geo); }
   catch(e){
     return { nodes:[h('p', { class:'msg err' }, 'Карта маршрута не построилась: ' + e.message)], mount:() => {} };
   }
 }
 
-function drawRouteMap(L, el, d, outBox, routeDate){
+function drawRouteMap(L, el, d, outBox, routeDate, geo){
   el.replaceChildren();
   /* колесо мыши листает страницу, а не карту; масштаб — кнопками или двумя пальцами */
-  const map = L.map(el, { scrollWheelZoom:false });
+  /* начальный вид сразу: линии GeoJSON на карту без вида Leaflet не добавляет (падает на отсечении) */
+  const map = L.map(el, { scrollWheelZoom:false }).setView(MAP_DEFAULT_VIEW, 9);
   const seen = [];   // всё видимое — по нему кадр карты
   /* карточка могла открыться в скрытой вкладке (перезагрузка данных): Leaflet видит блок 0×0.
      Тогда кадр строится, когда вкладку покажут (selectTab зовёт routeMap.fit). */
@@ -1514,8 +1536,21 @@ function drawRouteMap(L, el, d, outBox, routeDate){
   const icon = (cls, text, size) => L.divIcon({ className:cls, html:h('span', null, text), iconSize:size, iconAnchor:[size[0] / 2, size[1] / 2] });
   const tip = (...lines) => h('div', { class:'map-tip' }, lines.filter(Boolean).map(x => h('div', null, x)));
 
-  if (d.planLine.length > 1) L.polyline(d.planLine, { color:MAP_COLOR.plan, weight:3, opacity:.75, dashArray:'6 6' }).addTo(map);
+  /* GeoJSON из базы: в кадр — углы его рамки */
+  const addGeo = (gj, style, tipNode) => {
+    const layer = L.geoJSON(gj, { style:() => style }).addTo(map);
+    if (tipNode) layer.bindTooltip(tipNode, { sticky:true });
+    const b = layer.getBounds();
+    if (b.isValid()) seen.push([b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]);
+  };
+  if (geo.plan) addGeo(geo.plan, { color:MAP_COLOR.plan, weight:3, opacity:.75, dashArray:'6 6' }, tip('Плановая дорога Dextra'));
+  else if (d.planLine.length > 1) L.polyline(d.planLine, { color:MAP_COLOR.plan, weight:3, opacity:.75, dashArray:'6 6' }).addTo(map);
   seen.push(...d.planLine);
+  if (geo.track) addGeo(geo.track, { color:MAP_COLOR.img, weight:3, opacity:.9 }, tip('Путь машины по IMG в окне маршрута'));
+  for (const x of geo.off || []){
+    addGeo(x.geom, { color:MAP_COLOR.off, weight:6, opacity:.9 },
+      tip(`Вне маршрута ${tm(x.from, routeDate)}–${tm(x.to, routeDate)}`, `${km(n(x.km))} км · до ${km(n(x.max_km))} км от плановой дороги`));
+  }
 
   const outLayer = L.layerGroup();
   for (const s of d.segs){
@@ -1526,12 +1561,14 @@ function drawRouteMap(L, el, d, outBox, routeDate){
     line.bindTooltip(tip(`IMG ${tm(t.started_at, routeDate)}–${tm(t.ended_at, routeDate)} · ${km(n(t.km))} км` +
       (n(t.max_speed) !== null ? ` · до ${int(n(t.max_speed))} км/ч` : ''),
       t.start_addr ? 'откуда: ' + t.start_addr : null, t.end_addr ? 'куда: ' + t.end_addr : null), { sticky:true });
-    if (s.inWin){ line.addTo(map); seen.push([s.from.lat, s.from.lng], [s.to.lat, s.to.lng]); }
+    /* есть трек — прямые поездок в окне не нужны: путь виден по дорогам */
+    if (s.inWin){ if (!geo.track){ line.addTo(map); seen.push([s.from.lat, s.from.lng], [s.to.lat, s.to.lng]); } }
     else outLayer.addLayer(line);
   }
   if (outBox) outBox.addEventListener('change', () => { if (outBox.checked) outLayer.addTo(map); else outLayer.remove(); });
 
-  for (const s of d.stops){
+  /* с треком и плановой дорогой «вне маршрута» — красные участки; красные стоянки по точкам не рисуем */
+  for (const s of geo.track && geo.plan ? d.stops.filter(x => !x.far) : d.stops){
     const text = [`${s.far ? 'Заезд вне маршрута' : 'Стоянка IMG'} ${tm(s.from, routeDate)}–${s.to ? tm(s.to, routeDate) : '—'}${s.untilFinish ? ' (до финиша маршрута)' : ''}, ${int(s.min)} мин`, s.addr,
       s.near ? `до точки Dextra ${km(s.distM / 1000)} км: ${nearName(s.near)}` : 'точек Dextra с координатами нет'];
     /* на красной метке — как далеко от маршрута: это и есть нарушение */
@@ -1702,9 +1739,13 @@ function renderImgLoads(){
 }
 
 function renderImgSync(){
-  /* ошибка всего прогона (токен, шаблон) — пока после неё не было прогона по машинам */
-  const run = imgSync.find(x => !x.plate_key);
+  /* ошибка всего прогона (токен, шаблон) — пока после неё не было прогона по машинам;
+     строки очереди треков (track_points) — отдельно: у них тоже нет машины */
+  const isTrack = x => !x.plate_key && (x.track_points != null || !!x.track_error);
+  const run = imgSync.find(x => !x.plate_key && !isTrack(x));
   const runError = run && !imgSync.some(x => x.plate_key && x.id > run.id) ? run.error : '';
+  const track = imgSync.find(isTrack);
+  const trackError = track && track.track_error ? track.track_error : '';
   const last = [...groupBy(imgSync.filter(x => x.plate_key), x => x.plate_key)].map(([, rows]) => {
     const ok = rows.find(x => x.status === 'ok' || x.status === 'empty');
     const err = rows.find(x => x.status === 'error' || x.status === 'skipped');
@@ -1713,7 +1754,8 @@ function renderImgSync(){
       idle:!!ok && ok.status === 'empty',
       error:err && (!ok || err.id > ok.id) ? (err.error || err.status) : '' };
   }).sort((a, b) => byText(a.name, b.name));
-  const rows = runError ? [{ name:'Весь прогон', lastRun:run.finished_at || run.started_at, okPeriod:'', trips:null, km:null, error:runError }, ...last] : last;
+  const rows = (runError ? [{ name:'Весь прогон', lastRun:run.finished_at || run.started_at, okPeriod:'', trips:null, km:null, error:runError }] : [])
+    .concat(trackError ? [{ name:'Треки машин', lastRun:track.finished_at || track.started_at, okPeriod:'', trips:null, km:null, error:trackError }] : [], last);
   put('tbl-img-sync', table([
     { t:'Машина в IMG', v:r => r.name },
     { t:'Последний прогон', v:r => dt(r.lastRun), mono:true },
@@ -1732,14 +1774,16 @@ function renderSync(){
   const last = [...groupBy(syncLog, x => x.city)].map(([city, rows]) => {
     const ok = rows.find(x => x.status === 'ok');
     const err = rows.find(x => x.status === 'error');
+    /* день загружен, но с пометкой (например, плановые дороги не пришли) — предупреждение, не ошибка */
     return { city:cityName(city), lastRun:rows[0].finished_at || rows[0].started_at, lastOkDay:ok ? ok.route_date : null,
-      error:err && (!ok || err.id > ok.id) ? `${ruDate(err.route_date)}: ${err.error || ''}` : '' };
+      error:err && (!ok || err.id > ok.id) ? `${ruDate(err.route_date)}: ${err.error || ''}` : '',
+      warn:ok && ok.error && rows[0] === ok ? `${ruDate(ok.route_date)}: ${ok.error}` : '' };
   }).sort((a, b) => byText(a.city, b.city));
   put('tbl-sync-city', table([
     { t:'Город', v:r => r.city },
     { t:'Последний прогон', v:r => dt(r.lastRun), mono:true },
     { t:'Последний день с маршрутами', v:r => ruDate(r.lastOkDay), mono:true },
-    { t:'Состояние', v:r => r.error || 'в порядке', f:(v, r) => r.error ? chip(v, 'bad') : chip(v, 'sev3') },
+    { t:'Состояние', v:r => r.error || r.warn || 'в порядке', f:(v, r) => chip(v, r.error ? 'bad' : r.warn ? 'warn' : 'sev3') },
   ], last, { empty:'Журнал синхронизации пуст' }));
   const st = { ok:['загружено', 'info'], empty:['маршрутов нет', 'sev3'], error:['ошибка', 'bad'] };
   put('tbl-sync', table([

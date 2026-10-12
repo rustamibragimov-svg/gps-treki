@@ -322,6 +322,9 @@
         <div class="tbl" id="tbl-img-preview"></div>
         <div class="bar"><h2>Загружено из IMG</h2></div>
         <div class="tbl" id="tbl-img-loads"></div>
+        <div class="bar"><h2>IMG — автоматически</h2></div>
+        <p class="note">Поездки IMG загружаются автоматически каждый день в 20:10 по Ташкенту: сегодняшний день и три предыдущих. Ручная загрузка Excel выше остаётся запасным путём.</p>
+        <div class="tbl" id="tbl-img-sync"></div>
         <div class="bar"><h2>Dextra</h2></div>
         <p class="note">Маршруты загружаются автоматически каждый день в 20:00 по Ташкенту: сегодняшний день и три предыдущих.</p>
         <div class="tbl" id="tbl-sync-city"></div>
@@ -828,7 +831,7 @@ function downloadCsv(name){
 
 /* ============ состояние ============ */
 let settings = {}, settingRows = [], rules = {}, routes = [], anomalies = [], syncLog = [];
-let aliasMap = new Map(), imgLoads = [], imgDraft = [], knownVehicles = null;
+let aliasMap = new Map(), imgLoads = [], imgSync = [], imgDraft = [], knownVehicles = null;
 let anomaliesByRoute = new Map(), loaded = null, openRoute = null, loadSeq = 0, detailSeq = 0;
 let cityFilter = '', sevFilter = 1;
 let openDay = null, detSort = 'date';   // раскрытая строка «день|город» в Детализации и её порядок
@@ -865,7 +868,7 @@ async function loadData(){
   $('btn-load').disabled = true;
   try {
     const range = `route_date=gte.${q(f.from)}&route_date=lte.${q(f.to)}` + (f.city ? `&city=eq.${q(f.city)}` : '');
-    const [s, ru, r, a, l, ri, al, il, ch] = await Promise.all([
+    const [s, ru, r, a, l, ri, al, il, ch, is] = await Promise.all([
       api('settings?select=key,value,note&order=key'),
       api('anomaly_rules?select=code,title,description,sort&order=sort'),
       apiAll(`v_route_metrics?select=*&${range}&order=route_date.desc,city,courier_name,route_id`),
@@ -875,6 +878,7 @@ async function loadData(){
       api('vehicle_aliases?select=alias_key,plate_key,note&order=alias_key'),
       api('img_loads?select=*&order=id.desc&limit=300'),
       apiAll(`v_route_checks?select=route_id,cp1,cp2,cp3,cp4&${range}&order=route_id`),
+      api('img_sync_log?select=*&dry_run=eq.false&order=id.desc&limit=300'),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
@@ -884,7 +888,7 @@ async function loadData(){
     const imgBy = new Map(ri.map(x => [x.route_id, x]));
     const chkBy = new Map(ch.map(x => [x.route_id, x]));
     routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null, chk:chkBy.get(x.route_id) || null }));
-    anomalies = a; syncLog = l; imgLoads = il;
+    anomalies = a; syncLog = l; imgLoads = il; imgSync = is;
     aliasMap = new Map(al.map(x => [x.alias_key, x.plate_key]));
     anomaliesByRoute = new Map();
     for (const x of anomalies){
@@ -1861,9 +1865,34 @@ function renderImgLoads(){
   ], last, { empty:'Отчёты IMG ещё не загружались' }));
 }
 
+function renderImgSync(){
+  /* ошибка всего прогона (токен, шаблон) — пока после неё не было прогона по машинам */
+  const run = imgSync.find(x => !x.plate_key);
+  const runError = run && !imgSync.some(x => x.plate_key && x.id > run.id) ? run.error : '';
+  const last = [...groupBy(imgSync.filter(x => x.plate_key), x => x.plate_key)].map(([, rows]) => {
+    const ok = rows.find(x => x.status === 'ok' || x.status === 'empty');
+    const err = rows.find(x => x.status === 'error' || x.status === 'skipped');
+    return { name:rows[0].unit_name || rows[0].plate_key, lastRun:rows[0].finished_at || rows[0].started_at,
+      okPeriod:ok ? `${dt(ok.period_from)} — ${dt(ok.period_to)}` : '', trips:ok ? ok.trips : null, km:ok ? ok.km : null,
+      idle:!!ok && ok.status === 'empty',
+      error:err && (!ok || err.id > ok.id) ? (err.error || err.status) : '' };
+  }).sort((a, b) => byText(a.name, b.name));
+  const rows = runError ? [{ name:'Весь прогон', lastRun:run.finished_at || run.started_at, okPeriod:'', trips:null, km:null, error:runError }, ...last] : last;
+  put('tbl-img-sync', table([
+    { t:'Машина в IMG', v:r => r.name },
+    { t:'Последний прогон', v:r => dt(r.lastRun), mono:true },
+    { t:'Период последней загрузки', v:r => r.okPeriod, mono:true },
+    { t:'Поездок', v:r => n(r.trips), num:true, f:int },
+    { t:'Км', v:r => n(r.km), num:true, f:km },
+    { t:'Состояние', v:r => r.error || (r.idle ? 'не ездил' : 'в порядке'),
+      f:(v, r) => r.error ? chip(v, 'bad') : chip(v, r.idle ? 'info' : 'sev3') },
+  ], rows, { empty:'Автоматическая загрузка IMG ещё не запускалась' }));
+}
+
 /* ============ загрузка данных и настройки ============ */
 function renderSync(){
   renderImgLoads();
+  renderImgSync();
   const last = [...groupBy(syncLog, x => x.city)].map(([city, rows]) => {
     const ok = rows.find(x => x.status === 'ok');
     const err = rows.find(x => x.status === 'error');
@@ -1964,9 +1993,9 @@ async function signOut(reason){
   loadSeq++; detailSeq++;
   settings = {}; settingRows = []; rules = {}; routes = []; anomalies = []; syncLog = [];
   anomaliesByRoute = new Map(); loaded = null; openRoute = null; openDay = null; routeHost = 'det';
-  aliasMap = new Map(); imgLoads = []; imgDraft = []; knownVehicles = null;
+  aliasMap = new Map(); imgLoads = []; imgSync = []; imgDraft = []; knownVehicles = null;
   $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');
-  ['tbl-img-preview', 'tbl-img-loads'].forEach(id => $(id).replaceChildren());
+  ['tbl-img-preview', 'tbl-img-loads', 'tbl-img-sync'].forEach(id => $(id).replaceChildren());
   for (const k of Object.keys(csvTables)) delete csvTables[k];
   ['kpis', 'tbl-sum', 'tbl-det', 'tbl-cp', 'tbl-anom', 'tbl-anom-legend', 'route-detail', 'cp-route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg']
     .forEach(id => $(id).replaceChildren());

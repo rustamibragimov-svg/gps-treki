@@ -189,6 +189,9 @@
   .map-pt{border-radius:50%;border:2px solid #fff}
   .map-pt.away{border-color:#DC2626;box-shadow:0 0 0 2px #fff,0 1px 4px rgba(0,0,0,.4)}
   .lg.pt.away{box-shadow:0 0 0 2px #DC2626}
+  /* без визита — пустой красный круг: закрыта, но машины там не было */
+  .map-pt.novisit,.lg.pt.novisit{background:#fff;color:#DC2626;border:3px solid #DC2626}
+  .map-pt.novisit{box-shadow:0 0 0 2px #fff,0 1px 4px rgba(0,0,0,.4)}
   .map-depot{border-radius:4px;border:2px solid #fff;background:var(--side)}
   .map-stop{border-radius:4px;background:#DC2626}
   .map-tip{font:12px/1.4 var(--sans);max-width:320px;white-space:normal}
@@ -1329,10 +1332,13 @@ const tripInWindow = (t, ws, we) => Date.parse(t.started_at) < we && Date.parse(
 /* у части поездок нет ссылки на начало — машина стояла там, где кончилась прошлая поездка */
 const tripFrom = (t, prev) => latLng(t.start_lat, t.start_lng) || (prev ? latLng(prev.end_lat, prev.end_lng) : null);
 
-/* Слои карты — чистые данные, без Leaflet */
-function routeMapData(r, points, acts, trips){
+/* Слои карты — чистые данные, без Leaflet.
+   notVisited — из rpc/route_map: [{id, m}] — точки «без визита» по треку (проверка 3); null — не проверялось */
+function routeMapData(r, points, acts, trips, notVisited){
   const state = a => a.status === 'completed' ? 'closed' : a.status === 'cancelled' ? 'cancelled' : 'open';
   const list = Array.isArray(trips) ? trips : [];
+  const nvChecked = Array.isArray(notVisited);
+  const nvM = new Map(nvChecked ? notVisited.map(x => [x.id, n(x.m)]) : []);
   /* far — заезд вне маршрута (проверка 4, любой длительности); stopMin — только для серых стоянок у точек */
   const farM = cfg('offroute_far_m'), closeFarM = cfg('map_close_far_m'), stopMin = cfg('map_stop_min');
   /* carM — где была машина по IMG, когда водитель закрыл точку; null — проверить нечем */
@@ -1341,7 +1347,10 @@ function routeMapData(r, points, acts, trips){
       const closedAt = msOf(p.row.a.completed_at);
       const at = closedAt !== null ? imgPositionAt(list, closedAt) : null;
       const carM = at ? haversineKm(at, p) * 1000 : null;
-      return { ...p, closedAt, carM, carAway:carM !== null && closeFarM !== null && carM > closeFarM };
+      /* trackM — ближе всего трек окна к точке «без визита», м */
+      const noVisit = nvM.has(p.row.a.action_id);
+      return { ...p, closedAt, carM, carAway:carM !== null && closeFarM !== null && carM > closeFarM,
+        noVisit, trackM:noVisit ? nvM.get(p.row.a.action_id) : null };
     });
   const depot = acts.filter(a => a.type === 'start' || a.type === 'end')
     .map(a => ({ ...latLng(a.lat, a.lng), a })).filter(p => p.lat !== undefined);
@@ -1360,7 +1369,7 @@ function routeMapData(r, points, acts, trips){
   /* как в v_route_control: заезд к отменённой точке — не вне маршрута */
   const targets = plan.concat(depot);
   const stops = stopsConfigured && segs.length ? findStops(list, hasWin ? { ws, we, end:r.win_end } : null, targets, stopMin, farM) : [];
-  return { plan, start, end, planLine, segs, stops, stopsConfigured, hasWin, stopMin, farM, closeFarM,
+  return { plan, start, end, planLine, segs, stops, stopsConfigured, hasWin, stopMin, farM, closeFarM, nvChecked,
     unchecked:plan.filter(p => p.closedAt !== null && p.carM === null).length,
     noCoords:list.length > 0 && !segs.length };
 }
@@ -1414,11 +1423,12 @@ function imgPositionAt(list, ms){
 const nearName = p => !p ? '—' : p.a ? (p.a.type === 'start' ? 'склад (старт)' : 'склад (финиш)')
   : `${p.row.planNo !== null ? '№ ' + p.row.planNo + ' · ' : ''}${p.row.a.address || p.row.a.label || 'точка'}`;
 
-/* geo — ответ rpc/route_map: { plan, track, off[] } (GeoJSON); { error } или пусто — карта по поездкам */
+/* geo — ответ rpc/route_map: { plan, track, off[] } (GeoJSON) и not_visited [{id, m}] | null;
+   { error } или пусто — карта по поездкам */
 function routeMapBlock(r, points, acts, trips, geo){
   const title = h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, 'Карта: план Dextra и путь машины по IMG'));
-  const d = routeMapData(r, points, acts, trips);
   const g = geo && !geo.error ? geo : {};
+  const d = routeMapData(r, points, acts, trips, g.not_visited);
   const road = !!g.plan, track = !!g.track;
   const offParts = road && track && Array.isArray(g.off) ? g.off : [];
   const notes = [];
@@ -1440,6 +1450,7 @@ function routeMapBlock(r, points, acts, trips, geo){
     h('span', null, h('i', { class:'lg plan' }), road ? 'плановая дорога Dextra' : 'план Dextra (по прямой)'),
     h('span', null, h('i', { class:'lg pt closed' }), 'закрыта'),
     h('span', null, h('i', { class:'lg pt closed away' }), 'закрыта вдали от машины'),
+    d.nvChecked ? h('span', null, h('i', { class:'lg pt novisit' }), 'без визита') : null,
     h('span', null, h('i', { class:'lg pt open' }), 'не закрыта'),
     h('span', null, h('i', { class:'lg pt cancelled' }), 'отменена'),
     h('span', null, h('i', { class:'lg depot' }), 'склад'),
@@ -1476,6 +1487,20 @@ function routeMapBlock(r, points, acts, trips, geo){
     h('p', { class:'note' }, `Поездка IMG кончилась дальше ${int(d.farM)} м от всех точек маршрута и склада${d.hasWin ? ', в окне маршрута' : ''}, сколько бы машина там ни стояла.`),
     h('div', { class:'tbl' }, table(stopCols, far, { empty:'Заездов вне маршрута нет', emptyHint:'Все остановки машины — у точек маршрута или склада.' })),
   ];
+  /* как проверка 3 в Своде: тот же список из базы (точки без координат база тоже не проверяет) */
+  const noVisit = d.plan.filter(p => p.noVisit);
+  const nvCols = [
+    { t:'№ план', v:p => p.row.planNo, num:true },
+    { t:'Адрес', v:p => p.row.a.address || p.row.a.label },
+    { t:'Закрыта', v:p => tm(p.row.a.completed_at, r.route_date), mono:true },
+    { t:'Трек ближе всего, км', v:p => p.trackM === null ? null : p.trackM / 1000, num:true, f:v => v === null ? '—' : km(v) },
+  ];
+  const nvPart = !d.nvChecked ? [] : [
+    h('div', { class:'bar', style:'margin-top:8px' }, h('h2', null, `Точки без визита — ${noVisit.length}`)),
+    h('p', { class:'note' }, `Точка закрыта, а трек машины IMG в окне маршрута ни разу не подходил к ней ближе ${int(cfg('not_visited_m'))} м. ` +
+      'Проверяются точки, у которых трек есть в пределах 10 минут от закрытия.'),
+    h('div', { class:'tbl' }, table(nvCols, noVisit, { empty:'Точек без визита нет', emptyHint:'Машина по треку была у всех закрытых точек.' })),
+  ];
   const away = d.plan.filter(p => p.carAway);
   const awayCols = [
     { t:'№ план', v:p => p.row.planNo, num:true },
@@ -1494,7 +1519,7 @@ function routeMapBlock(r, points, acts, trips, geo){
       h('p', { class:'note' }, 'Номер на точке — порядок в плане Dextra. ' +
         (track ? 'Оранжевая линия — путь машины по трекеру IMG в окне маршрута. ' : 'Отрезки IMG — прямая от начала до конца поездки, не дорога. ') +
         'Наведите на точку, линию или стоянку — подробности.'),
-      ...offPart, ...awayPart, ...stopsPart].filter(Boolean),
+      ...offPart, ...nvPart, ...awayPart, ...stopsPart].filter(Boolean),
     mount:seq => loadLeaflet()
       .then(L => { if (seq === detailSeq && el.isConnected) drawRouteMap(L, el, d, outBox, r.route_date, { ...g, off:offParts }); })
       .catch(e => {
@@ -1589,11 +1614,14 @@ function drawRouteMap(L, el, d, outBox, routeDate, geo){
   }
   for (const p of d.plan){
     const a = p.row.a;
-    L.marker([p.lat, p.lng], { icon:icon('map-pt ' + p.state + (p.carAway ? ' away' : ''), p.row.planNo ?? '+', [22, 22]), zIndexOffset:1000 })
+    /* «без визита» важнее «закрыта вдали»: это нарушение проверки 3 */
+    const mark = p.noVisit ? ' novisit' : p.carAway ? ' away' : '';
+    L.marker([p.lat, p.lng], { icon:icon('map-pt ' + p.state + mark, p.row.planNo ?? '+', [22, 22]), zIndexOffset:p.noVisit ? 1100 : 1000 })
       .bindTooltip(tip(
         `${p.row.planNo !== null ? '№ ' + p.row.planNo + ' в плане' : 'вне оптимизации'}${p.row.factNo !== null ? ' · ' + p.row.factNo + '-я по факту' : ''}`,
         a.address || a.label,
         `план ${tm(a.planned_at, routeDate)} · закрыта ${tm(a.completed_at, routeDate)}`,
+        p.noVisit ? `без визита: трек машины ближе всего — ${p.trackM === null ? '—' : km(p.trackM / 1000) + ' км'}` : null,
         p.carM !== null ? `машина по IMG в момент закрытия — в ${km(p.carM / 1000)} км от точки` : null,
         p.row.flags.length ? p.row.flags.map(f => f[0]).join(', ') : null)).addTo(map);
     seen.push([p.lat, p.lng]);

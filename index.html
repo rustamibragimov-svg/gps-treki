@@ -176,6 +176,26 @@
   .chart .hit{fill:transparent} .chart .hit:hover{fill:var(--hover);opacity:.5}
   .trend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;margin:0 0 6px}
   .trend b{font-family:var(--mono)} .trend .better{color:var(--success-fg)} .trend .worse{color:var(--danger-fg)}
+  /* Оптимизация: 2025 — серым, факт Dextra 2026 — основным цветом, цель — зелёный пунктир, план Dextra —
+     тёмная черта, IMG (ориентир) — оранжевым, как на карте */
+  .chart svg .base{fill:none;stroke:var(--muted-fg);stroke-width:2}
+  .chart svg .goal{fill:none;stroke:var(--success);stroke-width:1.5;stroke-dasharray:5 4}
+  .chart svg .plan{stroke:var(--fg);stroke-width:2}
+  .chart svg .img-line{fill:none;stroke:#EA580C;stroke-width:1.5;stroke-dasharray:3 3;opacity:.8}
+  .chart svg .img-tick{stroke:#EA580C;stroke-width:2}
+  .chart svg circle.img-dot{fill:#EA580C;stroke:none}
+  .lg.img-dash{width:18px;border-top:2px dashed #EA580C}
+  .lg.img-tick{width:14px;border-top:2px solid #EA580C}
+  .chart rect.b25{fill:var(--muted-fg);opacity:.35} .chart rect.b26{fill:var(--primary);opacity:.75} .chart rect.b26.open{opacity:.3}
+  .chart svg text.better{fill:var(--success-fg);font-weight:600} .chart svg text.worse{fill:var(--danger-fg);font-weight:600}
+  .lg.b25{width:12px;height:12px;border-radius:2px;background:var(--muted-fg);opacity:.5}
+  .lg.b26{width:12px;height:12px;border-radius:2px;background:var(--primary)}
+  .lg.line26{width:18px;border-top:2px solid var(--primary)}
+  .lg.base{width:18px;border-top:2px solid var(--muted-fg)}
+  .lg.goal{width:18px;border-top:2px dashed var(--success)}
+  .lg.dx-plan{width:14px;border-top:2px solid var(--fg)}
+  .chart .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted-fg);margin:0 0 6px}
+  .chart .legend span{display:inline-flex;align-items:center;gap:6px}
   .kpi.route-check b{font-size:15px;font-family:var(--mono);font-weight:600}
   /* раскрытая строка: водители города за день */
   tr.open td{background:var(--info-bg)}
@@ -264,6 +284,8 @@
       <svg class="i" viewBox="0 0 24 24"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg></button>
     <button role="tab" id="t-an" aria-controls="p-an" aria-selected="false" aria-label="Аналитика по неделям" title="Аналитика">
       <svg class="i" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></svg></button>
+    <button role="tab" id="t-opt" aria-controls="p-opt" aria-selected="false" aria-label="Оптимизация км: год к году" title="Оптимизация">
+      <svg class="i" viewBox="0 0 24 24"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg></button>
     <button role="tab" id="t-sync" aria-controls="p-sync" aria-selected="false" aria-label="Загрузка данных" title="Загрузка данных">
       <svg class="i" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
     <button role="tab" id="t-cfg" aria-controls="p-cfg" aria-selected="false" aria-label="Настройки расчёта" title="Настройки">
@@ -326,6 +348,21 @@
         <p class="note" id="note-an"></p>
         <div id="an-charts"></div>
         <div class="tbl" id="tbl-an"></div>
+      </section>
+
+      <section role="tabpanel" id="p-opt" aria-labelledby="t-opt" hidden>
+        <div class="bar"><h2>Км на машину в рабочий день: 2026 против 2025</h2>
+          <div class="fgroup" id="f-opt-city" role="group" aria-label="Город для оптимизации"></div>
+          <button class="btn" data-csv="opt">
+            <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
+        <p class="note" id="note-opt"></p>
+        <div id="opt-charts"></div>
+        <div class="tbl" id="tbl-opt"></div>
+        <div class="bar"><h2>Водители: документ 2025 против IMG 2026</h2>
+          <button class="btn" data-csv="optd">
+            <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
+        <p class="note" id="note-optd"></p>
+        <div class="tbl" id="tbl-optd"></div>
       </section>
 
       <section role="tabpanel" id="p-sync" aria-labelledby="t-sync" hidden>
@@ -852,6 +889,7 @@ let routeHost = 'det';                   // где открыта карточк
 let focusCheck = null;                   // плитка Свода, чьи нарушители показаны вместо таблицы городов
 let weekRows = [], anCity = '';          // Аналитика: v_week_control и выбранный там город ('' — все)
 let weekError = null;                    // текст ошибки загрузки v_week_control
+let optRows = [], optDrivers = [], optCity = '', optError = null;   // Оптимизация: v_opt_period, v_opt_driver, город
 const cfg = k => n(settings[k]);
 
 function filters(){
@@ -878,7 +916,7 @@ async function loadData(){
   $('btn-load').disabled = true;
   try {
     const range = `route_date=gte.${q(f.from)}&route_date=lte.${q(f.to)}` + (f.city ? `&city=eq.${q(f.city)}` : '');
-    const [s, r, l, ri, al, il, is, ct, wk] = await Promise.all([
+    const [s, r, l, ri, al, il, is, ct, wk, op] = await Promise.all([
       api('settings?select=key,value,note&order=key'),
       apiAll(`v_route_metrics?select=*&${range}&order=route_date.desc,city,courier_name,route_id`),
       api('sync_log?select=*&order=id.desc&limit=200'),
@@ -890,6 +928,10 @@ async function loadData(){
       /* Аналитика — вся история, от периода и города сверху не зависит; её сбой не должен
          гасить Свод и Детализацию — ошибка показывается только в её разделе */
       apiAll('v_week_control?select=*&order=week_start,city').then(rows => ({ rows }), error => ({ rows:[], error })),
+      /* Оптимизация — так же: вся история, сбой виден только в её разделе */
+      Promise.all([apiAll('v_opt_period?select=*&order=period,period_start,city'),
+        apiAll('v_opt_driver?select=*&order=month,city,driver_name')])
+        .then(([rows, drivers]) => ({ rows, drivers }), error => ({ rows:[], drivers:[], error })),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
@@ -900,6 +942,7 @@ async function loadData(){
     routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null, ctl:ctlBy.get(x.route_id) || null }));
     syncLog = l; imgLoads = il; imgSync = is;
     weekRows = wk.rows; weekError = wk.error ? wk.error.message : null;
+    optRows = op.rows; optDrivers = op.drivers; optError = op.error ? op.error.message : null;
     aliasMap = new Map(al.map(x => [x.alias_key, x.plate_key]));
     loaded = { from:f.from, to:f.to, city:f.city };
     if (openRoute && !routes.some(x => x.route_id === openRoute)){ openRoute = null; detailSeq++; dropRouteMap(); }
@@ -1014,7 +1057,7 @@ const fileName = base => `${base}_${loaded ? loaded.from + '_' + loaded.to : 'pu
 /* Каждый раздел рисуется отдельно: ошибка в одном не должна гасить остальные. */
 function renderAll(){
   const parts = [['Свод', renderSummary], ['Детализация', renderDetail], ['Аналитика', renderAnalytics],
-    ['Загрузка', renderSync], ['Настройки', renderSettings]];
+    ['Оптимизация', renderOptimization], ['Загрузка', renderSync], ['Настройки', renderSettings]];
   const failed = [];
   for (const [name, fn] of parts){
     try { fn(); } catch(e){ failed.push(`${name}: ${e.message}`); }
@@ -2061,8 +2104,263 @@ function renderAnalytics(){
   csvTables.an = { cols, rows:desc, file:`dinamika_${anCity || 'vse'}_${today}.csv` };
 }
 
+/* ============ Оптимизация: км на машину в рабочий день, 2026 (факт Dextra) против того же месяца 2025 ============ */
+/* Основа — факт Dextra (правило проекта), IMG — ориентир за те же дни. База 2025 — файл «ГСМ и амортизация»
+   (= путевые листы), документы водителей — base_km_driver. Расчёт — в v_opt_period и v_opt_driver; цель и
+   праздники — settings opt_target_pct и opt_days_off. */
+const MONTHS_RU = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+const monthName = iso => MONTHS_RU[Number(iso.slice(5, 7)) - 1] + ' ' + iso.slice(0, 4);
+const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
+const changePct = (now, was) => now === null || !was ? null : Math.round((now - was) / was * 100);
+const signedPct = v => v === null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v) + '%';
+const changeCls = c => c === null || c === 0 ? null : c < 0 ? 'better' : 'worse';
+const optChange = r => changePct(n(r.dx_per_day), n(r.base_per_car_day));
+/* цель в км: база × (1 − цель %); без настройки или без базы — нет */
+function optGoal(r){
+  const t = cfg('opt_target_pct'), b = n(r.base_per_car_day);
+  return t === null || b === null ? null : b * (1 - t / 100);
+}
+
+/* строки периода одного города ('' — итог по всем); open — неделя или месяц ещё идёт */
+function optSeries(period, city, today){
+  return optRows.filter(r => r.period === period && (r.city || '') === city)
+    .sort((a, b) => byText(a.period_start, b.period_start))
+    .map(r => ({ ...r, open:period === 'week' ? addDays(r.period_start, 6) >= today : r.period_start.slice(0, 7) === today.slice(0, 7) }));
+}
+const optLabel = r => r.period === 'week'
+  ? `Неделя ${shortDate(r.period_start)}–${shortDate(addDays(r.period_start, 6))}` : cap(monthName(r.period_start));
+/* до dextra_return_fix_date факт Dextra без дороги на склад — цифра периода ниже настоящей */
+function optFixNote(r){
+  const fix = settings.dextra_return_fix_date;
+  if (!fix) return null;
+  const end = r.period === 'week' ? addDays(r.period_start, 6)
+    : addDays(r.period_start.slice(0, 8) + '01', 40).slice(0, 8) + '01';   // первое число следующего месяца
+  const last = r.period === 'week' ? end : addDays(end, -1);
+  if (last < fix) return 'факт без дороги на склад';
+  return r.period_start < fix ? 'факт частично без дороги на склад' : null;
+}
+function optTip(r){
+  const t = cfg('opt_target_pct'), base = n(r.base_per_car_day);
+  return [optLabel(r) + (r.open ? ' · ещё идёт' : ''),
+    `Dextra 2026: факт ${km(n(r.dx_per_day))} км на машину в день (машин ${int(n(r.cars))}, дней с фактом ${int(n(r.fact_days))} из ${int(n(r.days))}), план ${km(n(r.plan_per_day))} км`,
+    base === null ? 'базы 2025 за этот месяц нет'
+      : `${monthName(r.base_month)}: ${km(base)} км (водителей ${int(n(r.base_cars))}, км за месяц ${int(n(r.base_km))})`,
+    `изменение ${signedPct(optChange(r))}` + (t !== null && base !== null ? ` · цель −${int(t)}%: ${km(optGoal(r))} км` : ''),
+    optFixNote(r) ? `${cap(optFixNote(r))} (до ${ruDate(settings.dextra_return_fix_date)}) — настоящий пробег выше` : null,
+    `ориентир IMG: ${km(n(r.img_per_day))} км за весь день машины (дней с данными IMG ${int(n(r.img_days))})`,
+    r.few_cars ? 'в Dextra меньше половины машин из базы — в итог по всем не идёт' : null].filter(Boolean).join('\n');
+}
+/* общая шкала: круглая сверху, с запасом над самым большим значением */
+const optScale = vals => Math.max(20, Math.ceil(Math.max(0, ...vals.filter(v => v !== null)) * 1.1 / 20) * 20);
+function optGrid(g, y, yMax, L, x2){
+  for (let i = 0; i <= 5; i++){
+    const v = yMax / 5 * i;
+    g.push(sv('line', { class:'grid', x1:L, x2, y1:y(v), y2:y(v) }), sv('text', { x:L - 6, y:y(v) + 4, 'text-anchor':'end' }, int(v)));
+  }
+  g.push(sv('line', { class:'axis', x1:L, x2, y1:y(0), y2:y(0) }));
+}
+/* вертикальная отметка даты внутри недель; подпись у правого края — влево, чтобы не обрезалась */
+function optMark(g, rows, iso, text, geo){
+  const { L, R, W, T, ph, band } = geo;
+  const at = iso ? rows.findIndex(r => r.period_start <= iso && iso <= addDays(r.period_start, 6)) : -1;
+  if (at < 0) return;
+  const fx = L + band * (at + (Date.parse(iso) - Date.parse(rows[at].period_start)) / 864e5 / 7);
+  const right = fx > W - R - 200;
+  g.push(sv('line', { class:'fix', x1:fx, x2:fx, y1:T, y2:T + ph }),
+    sv('text', { x:right ? fx - 4 : fx + 4, y:T + 10 + geo.row * 13, 'text-anchor':right ? 'end' : 'start' }, text));
+}
+
+/* недели: линия — факт Dextra 2026, пунктир оранжевый — IMG, ступенька — тот же месяц 2025, зелёный — цель */
+function optWeekChart(rows, city){
+  const W = 900, H = 240, L = 40, R = 76, T = 14, B = 24;
+  const pw = W - L - R, ph = H - T - B, band = pw / rows.length;
+  const yMax = optScale(rows.flatMap(r => [n(r.dx_per_day), n(r.base_per_car_day), n(r.img_per_day)]));
+  const y = v => T + ph - Math.min(v, yMax) / yMax * ph;
+  const cx = i => L + band * i + band / 2;
+  const every = Math.ceil(44 / band);
+  const labelled = i => i === rows.length - 1 || (rows.length - 1 - i) % every === 0;
+  const g = [];
+  optGrid(g, y, yMax, L, W - R);
+  /* ступенька по полосам недель; разрыв там, где значения нет */
+  const step = (f, cls) => {
+    let d = '', open = false;
+    rows.forEach((r, i) => {
+      const v = f(r);
+      if (v === null){ open = false; return; }
+      const x0 = (L + band * i).toFixed(1), x1 = (L + band * (i + 1)).toFixed(1), yy = y(v).toFixed(1);
+      d += `${open ? 'L' : 'M'}${x0} ${yy} L${x1} ${yy} `;
+      open = true;
+    });
+    if (d) g.push(sv('path', { class:cls, d:d.trim() }));
+  };
+  step(r => n(r.base_per_car_day), 'base');
+  step(optGoal, 'goal');
+  const last = rows[rows.length - 1];
+  if (n(last.base_per_car_day) !== null) g.push(sv('text', { x:W - R + 4, y:y(n(last.base_per_car_day)) + 4 }, '2025'));
+  if (optGoal(last) !== null) g.push(sv('text', { x:W - R + 4, y:y(optGoal(last)) + 4 }, `цель −${int(cfg('opt_target_pct'))}%`));
+  const geo = { L, R, W, T, ph, band, row:0 };
+  optMark(g, rows, city && settings['stable_from:' + city], `с ${shortDate(settings['stable_from:' + city] || '')} Dextra без обкатки`, geo);
+  const fix = settings.dextra_return_fix_date;
+  optMark(g, rows, fix, `с ${shortDate(fix || '')} в факте дорога на склад`, { ...geo, row:1 });
+  rows.forEach((r, i) => { if (labelled(i)) g.push(sv('text', { x:cx(i), y:H - 6, 'text-anchor':'middle' }, shortDate(r.period_start))); });
+  const path = ps => ps.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' ');
+  /* ориентир IMG — тонкий пунктир без подписей */
+  const imgPts = rows.map((r, i) => n(r.img_per_day) === null ? null : { x:cx(i), y:y(n(r.img_per_day)) }).filter(Boolean);
+  if (imgPts.length > 1) g.push(sv('path', { class:'img-line', d:path(imgPts) }));
+  else if (imgPts.length) g.push(sv('circle', { class:'img-dot', cx:imgPts[0].x, cy:imgPts[0].y, r:3 }));
+  const pts = rows.map((r, i) => n(r.dx_per_day) === null ? null : { x:cx(i), y:y(n(r.dx_per_day)), v:n(r.dx_per_day), open:r.open });
+  const closed = pts.filter(p => p && !p.open), open = pts.filter(p => p && p.open);
+  if (closed.length > 1) g.push(sv('path', { class:'line', d:path(closed) }));
+  if (open.length) g.push(sv('path', { class:'line open', d:path(closed.slice(-1).concat(open)) }));
+  pts.forEach((p, i) => {
+    if (!p) return;
+    g.push(sv('circle', { class:p.open ? 'open' : null, cx:p.x, cy:p.y, r:3.5 }));
+    if (labelled(i)) g.push(sv('text', { x:p.x, y:p.y - 8, 'text-anchor':'middle' }, int(p.v)));
+  });
+  rows.forEach((r, i) => g.push(sv('rect', { class:'hit', x:L + band * i, y:T, width:band, height:ph }, sv('title', null, optTip(r)))));
+  return sv('svg', { viewBox:`0 0 ${W} ${H}`, role:'img', 'aria-label':'Км на машину в рабочий день по неделям: факт Dextra 2026 против того же месяца 2025' }, g);
+}
+
+/* месяцы: столбики 2025 и Dextra 2026 рядом, над 2026 — изменение; зелёный пунктир — цель,
+   тёмная черта — план Dextra, оранжевая — IMG */
+function optMonthChart(rows){
+  const W = 900, H = 240, L = 40, R = 16, T = 22, B = 24;
+  const pw = W - L - R, ph = H - T - B, band = pw / rows.length;
+  const yMax = optScale(rows.flatMap(r => [n(r.dx_per_day), n(r.base_per_car_day), n(r.plan_per_day), n(r.img_per_day)]));
+  const y = v => T + ph - Math.min(v, yMax) / yMax * ph;
+  const g = [];
+  optGrid(g, y, yMax, L, W - R);
+  const bw = Math.min(56, band * 0.3);
+  rows.forEach((r, i) => {
+    const cx = L + band * i + band / 2;
+    const bar = (v, x, cls) => { if (v !== null && v > 0) g.push(sv('rect', { class:cls, x, y:y(v), width:bw, height:y(0) - y(v) })); };
+    const tick = (v, cls) => { if (v !== null) g.push(sv('line', { class:cls, x1:cx + 2, x2:cx + 2 + bw, y1:y(v), y2:y(v) })); };
+    const base = n(r.base_per_car_day), now = n(r.dx_per_day), goal = optGoal(r);
+    bar(base, cx - bw - 2, 'b25');
+    bar(now, cx + 2, 'b26' + (r.open ? ' open' : ''));
+    if (base !== null) g.push(sv('text', { x:cx - bw / 2 - 2, y:y(base) - 4, 'text-anchor':'middle' }, int(base)));
+    if (now !== null){
+      const c = optChange(r);
+      g.push(sv('text', { x:cx + bw / 2 + 2, y:y(now) - 4, 'text-anchor':'middle' }, int(now)),
+        sv('text', { x:cx + bw / 2 + 2, y:Math.max(T - 6, y(now) - 18), 'text-anchor':'middle', class:changeCls(c) }, signedPct(c)));
+    }
+    if (goal !== null) g.push(sv('line', { class:'goal', x1:cx - bw - 8, x2:cx + bw + 8, y1:y(goal), y2:y(goal) }));
+    tick(n(r.plan_per_day), 'plan');
+    tick(n(r.img_per_day), 'img-tick');
+    g.push(sv('text', { x:cx, y:H - 6, 'text-anchor':'middle' }, MONTHS_RU[Number(r.period_start.slice(5, 7)) - 1] + (r.open ? ' (идёт)' : '')),
+      sv('rect', { class:'hit', x:L + band * i, y:T, width:band, height:ph }, sv('title', null, optTip(r))));
+  });
+  return sv('svg', { viewBox:`0 0 ${W} ${H}`, role:'img', 'aria-label':'Км на машину в рабочий день по месяцам: 2025 и факт Dextra 2026' }, g);
+}
+
+/* последние два месяца словами: факт Dextra, год назад, изменение и цель */
+function optHead(months){
+  const t = cfg('opt_target_pct');
+  return h('div', { class:'trend' }, months.slice(-2).reverse().map(r => {
+    const c = optChange(r), fix = optFixNote(r);
+    return h('span', null, `${cap(monthName(r.period_start))}${r.open ? ' (идёт)' : ''}: Dextra `, h('b', null, km(n(r.dx_per_day)) + ' км'),
+      ` на машину в день, год назад ${km(n(r.base_per_car_day))} — `,
+      h('b', { class:changeCls(c) }, signedPct(c)),
+      t === null || c === null ? '' : c <= -t ? ' · цель достигнута' : ` · до цели −${int(t)}% ещё ${int(c + t)} п. п.`,
+      fix ? ` (${fix} — на деле пробег выше)` : '');
+  }));
+}
+const legend = (...items) => h('div', { class:'legend' }, items.map(([cls, text]) => h('span', null, h('i', { class:'lg ' + cls }), text)));
+
+function renderOptimization(){
+  setPressed('f-opt-city', b => b.dataset.city === optCity);
+  const today = localDate(new Date());
+  const t = cfg('opt_target_pct');
+  $('note-opt').textContent = 'Км на машину в рабочий день. 2026 — факт Dextra: маршруты после обкатки по вчера, км дня машины ' +
+    '(дни, за которые Dextra не отдала факт, не считаются). 2025 — файл «ГСМ и амортизация» (из путевых листов) за тот же месяц: ' +
+    'км, делённые на водителей × рабочие дни. IMG — ориентир: км за весь день той же машины в те же дни. Воскресенья, субботы вне ' +
+    'сезона и праздники (настройка opt_days_off) не считаются. Факт Dextra до ' + ruDate(settings.dextra_return_fix_date) +
+    ' — без дороги на склад. Период и город сверху на раздел не влияют; наведите на неделю или месяц — подробности.';
+  $('note-optd').textContent = 'Документ 2025 — путевой лист (км и дни из листа) или ведомость амортизации (дней в ней нет — км делятся на рабочие дни месяца). ' +
+    '2026 — дни водителя с маршрутом Dextra после обкатки в тот же месяц: факт Dextra в день; IMG — км за весь день машины маршрута.';
+  const weeks = optSeries('week', optCity, today);
+  const months = optSeries('month', optCity, today);
+  if (optError || !months.length){
+    put('opt-charts', optError
+      ? emptyBox('Оптимизация не загрузилась', optError + ' Нажмите «Показать» на Своде, чтобы повторить.')
+      : emptyBox('Данных нет', 'У этого города ещё нет маршрутов Dextra после обкатки.'));
+    $('tbl-opt').replaceChildren();
+    csvTables.opt = { cols:[], rows:[], file:fileName('optimizaciya') };
+  } else {
+    const goalText = t === null ? 'цель не задана (opt_target_pct)' : `цель −${int(t)}%`;
+    $('opt-charts').replaceChildren(
+      h('div', { class:'chart' },
+        h('h3', null, '1 · По неделям'),
+        legend(['line26', 'факт Dextra 2026'], ['base', 'тот же месяц 2025'], ['goal', goalText], ['img-dash', 'IMG — ориентир']),
+        optHead(months),
+        weeks.length ? h('div', { class:'scroll' }, optWeekChart(weeks, optCity)) : emptyBox('Недель с данными нет', '')),
+      h('div', { class:'chart' },
+        h('h3', null, '2 · По месяцам'),
+        legend(['b25', '2025'], ['b26', 'факт Dextra 2026 (бледный — месяц идёт)'], ['goal', goalText],
+          ['dx-plan', 'план Dextra'], ['img-tick', 'IMG — ориентир']),
+        h('div', { class:'scroll' }, optMonthChart(months))));
+    const cols = [
+      { t:'Месяц', v:r => cap(monthName(r.period_start)) + (r.open ? ' (идёт)' : '') + (optFixNote(r) ? ' *' : ''),
+        weak:r => r.few_cars, title:r => [r.few_cars ? 'в Dextra меньше половины машин из базы — в итог по всем не идёт' : null,
+          optFixNote(r) ? `* ${optFixNote(r)} (до ${ruDate(settings.dextra_return_fix_date)}) — настоящий пробег выше` : null].filter(Boolean).join('\n') || null },
+      { t:'2026 Dextra, км на машину в день', tip:'факт Dextra за день машины, средний по дням с фактом', v:r => n(r.dx_per_day), num:true, f:km },
+      { t:'2025, км на машину в день', tip:'км файла ГСМ / (водителей × рабочих дней месяца)', v:r => n(r.base_per_car_day), num:true, f:km },
+      { t:'Изменение', v:r => optChange(r), num:true, f:signedPct, bad:r => (optChange(r) ?? 0) > 0 },
+      { t:t === null ? 'Цель' : `Цель −${int(t)}%, км`, v:r => optGoal(r), num:true, f:km },
+      { t:'План Dextra в день', v:r => n(r.plan_per_day), num:true, f:km },
+      { t:'IMG в день (ориентир)', tip:'км IMG за весь день той же машины в те же дни', v:r => n(r.img_per_day), num:true, f:km },
+      { t:'Машин 2026', v:r => n(r.cars), num:true, f:int },
+      { t:'Дней с фактом', v:r => n(r.fact_days), num:true, f:int, title:r => `машино-дней с маршрутом ${int(n(r.days))}` },
+      { t:'Км Dextra 2026', v:r => n(r.dx_km), num:true, f:int },
+      { t:'Водителей 2025', v:r => n(r.base_cars), num:true, f:int },
+      { t:'Км 2025 за месяц', v:r => n(r.base_km), num:true, f:int },
+    ];
+    const desc = [...months].reverse();
+    put('tbl-opt', table(cols, desc));
+    if (desc.some(optFixNote)) $('tbl-opt').append(h('p', { class:'note' },
+      `* до ${ruDate(settings.dextra_return_fix_date)} Dextra не считала дорогу на склад — факт этих месяцев ниже настоящего пробега.`));
+    csvTables.opt = { cols, rows:desc, file:`optimizaciya_${optCity || 'vse'}_${today}.csv` };
+  }
+  renderOptDrivers(today);
+}
+
+/* водители: документ 2025 против того же месяца 2026 — только месяцы, которые в 2026 уже начались */
+function renderOptDrivers(today){
+  if (optError){
+    put('tbl-optd', emptyBox('Водители не загрузились', optError));
+    csvTables.optd = { cols:[], rows:[], file:fileName('optimizaciya_voditeli') };
+    return;
+  }
+  const nowMonth = today.slice(0, 7);
+  const ym = iso => String(Number(iso.slice(0, 4)) + 1) + iso.slice(4, 7);   // тот же месяц через год
+  const rows = optDrivers.filter(r => (!optCity || r.city === optCity) && ym(r.month) <= nowMonth)
+    .sort((a, b) => byText(b.month, a.month) || byText(a.city, b.city) || byText(a.driver_name, b.driver_name));
+  const ch = r => changePct(n(r.fact_per_day), n(r.base_per_day));
+  const cols = [
+    { t:'Месяц', v:r => MONTHS_RU[Number(r.month.slice(5, 7)) - 1] + ` ${r.month.slice(0, 4)} → ${ym(r.month).slice(0, 4)}` +
+      (ym(r.month) === nowMonth ? ' (идёт)' : '') },
+    ...(optCity ? [] : [{ t:'Город', v:r => cityName(r.city) }]),
+    { t:'Водитель', v:r => r.driver_name, weak:r => !r.courier_id, title:r => r.courier_id ? null : 'в Dextra сейчас не работает' },
+    { t:'Документ', v:r => r.source },
+    { t:'Машина 2025', v:r => r.base_plate, mono:true },
+    { t:'Км 2025', v:r => n(r.base_km), num:true, f:int },
+    { t:'Дней 2025', v:r => n(r.base_days), num:true, f:int, title:r => r.work_days ? null : 'в ведомости дней нет — рабочие дни месяца' },
+    { t:'2025, км в день', v:r => n(r.base_per_day), num:true, f:km },
+    { t:'Машина 2026', v:r => r.plates, mono:true },
+    { t:'Дней 2026', tip:'дней с маршрутом Dextra после обкатки и фактом км', v:r => n(r.fact_days), num:true, f:int,
+      title:r => `дней с маршрутом ${int(n(r.days))}` },
+    { t:'2026 Dextra, км в день', v:r => n(r.fact_per_day), num:true, f:km },
+    { t:'Изменение', v:ch, num:true, f:signedPct, bad:r => (ch(r) ?? 0) > 0 },
+    { t:'План Dextra в день', v:r => n(r.plan_per_day), num:true, f:km },
+    { t:'IMG в день (ориентир)', v:r => n(r.img_per_day), num:true, f:km, title:r => `дней с данными IMG ${int(n(r.img_days))}` },
+  ];
+  put('tbl-optd', table(cols, rows, { empty:'Документов по водителям нет',
+    emptyHint:optCity ? 'По этому городу путевых листов или ведомости ещё не загружали.' : 'Путевые листы или ведомости ещё не загружали.' }));
+  csvTables.optd = { cols, rows, file:`optimizaciya_voditeli_${optCity || 'vse'}_${today}.csv` };
+}
+
 /* ============ разделы (боковая панель) ============ */
-const TABS = ['t-sum', 't-det', 't-an', 't-sync', 't-cfg'];
+const TABS = ['t-sum', 't-det', 't-an', 't-opt', 't-sync', 't-cfg'];
 function selectTab(id){
   for (const t of TABS){
     const on = t === id;
@@ -2072,7 +2370,7 @@ function selectTab(id){
   }
   $('page-title').textContent = $(id).getAttribute('aria-label');
   /* загрузка и настройки от периода и города не зависят — фильтры там только мешают */
-  $('filters').hidden = id === 't-sync' || id === 't-cfg' || id === 't-an';
+  $('filters').hidden = ['t-sync', 't-cfg', 't-an', 't-opt'].includes(id);
   if (routeMap) routeMap.fit();   // карта, нарисованная в скрытой вкладке, получила размер
 }
 TABS.forEach((t, i) => {
@@ -2131,13 +2429,16 @@ async function signOut(reason){
   loaded = null; openRoute = null; openDay = null; routeHost = 'det'; focusCheck = null;
   weekRows = []; anCity = ''; weekError = null;
   setPressed('f-an-city', b => b.dataset.city === '');
+  optRows = []; optDrivers = []; optCity = ''; optError = null;
+  setPressed('f-opt-city', b => b.dataset.city === '');
   aliasMap = new Map(); imgLoads = []; imgSync = []; imgDraft = []; knownVehicles = null;
   $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');
   ['tbl-img-preview', 'tbl-img-loads', 'tbl-img-sync'].forEach(id => $(id).replaceChildren());
   for (const k of Object.keys(csvTables)) delete csvTables[k];
-  ['kpis', 'tbl-sum', 'tbl-det', 'route-detail', 'sum-route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg', 'an-charts', 'tbl-an']
+  ['kpis', 'tbl-sum', 'tbl-det', 'route-detail', 'sum-route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg', 'an-charts', 'tbl-an',
+    'opt-charts', 'tbl-opt', 'tbl-optd']
     .forEach(id => $(id).replaceChildren());
-  $('note-sum').textContent = ''; $('note-det').textContent = ''; $('note-an').textContent = '';
+  ['note-sum', 'note-det', 'note-an', 'note-opt', 'note-optd'].forEach(id => { $(id).textContent = ''; });
   say('msg', '');
   conn('', '');
   /* следующий вошедший начинает со сводки, а не с чужой вкладки */
@@ -2179,6 +2480,11 @@ $('f-an-city').addEventListener('click', e => {
   anCity = b.dataset.city;
   try { renderAnalytics(); } catch(err){ say('msg', err.message, 'err'); }
 });
+$('f-opt-city').addEventListener('click', e => {
+  const b = e.target.closest('.pill'); if (!b) return;
+  optCity = b.dataset.city;
+  try { renderOptimization(); } catch(err){ say('msg', err.message, 'err'); }
+});
 document.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => downloadCsv(b.dataset.csv)));
 $('img-pick').addEventListener('click', () => $('img-files').click());
 $('img-files').addEventListener('change', e => {
@@ -2201,6 +2507,8 @@ $('img-write').addEventListener('click', writeImg);
   for (const [code, name] of Object.entries(CITY_NAMES)) $('f-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
   $('f-an-city').append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, 'Все города'));
   for (const [code, name] of Object.entries(CITY_NAMES)) $('f-an-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
+  $('f-opt-city').append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, 'Все города'));
+  for (const [code, name] of Object.entries(CITY_NAMES)) $('f-opt-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
   const today = localDate(new Date());
   const from = new Date(Date.parse(today + 'T00:00:00Z') - (DEFAULT_DAYS - 1) * 864e5).toISOString().slice(0, 10);
   $('f-from').value = from; $('f-to').value = today;

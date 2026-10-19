@@ -358,7 +358,7 @@
         <p class="note" id="note-opt"></p>
         <div id="opt-charts"></div>
         <div class="tbl" id="tbl-opt"></div>
-        <div class="bar"><h2>Водители: документ 2025 против IMG 2026</h2>
+        <div class="bar"><h2>Машины месяца: 2025 по путевым листам, 2026 по Dextra</h2>
           <button class="btn" data-csv="optd">
             <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
         <p class="note" id="note-optd"></p>
@@ -889,7 +889,7 @@ let routeHost = 'det';                   // где открыта карточк
 let focusCheck = null;                   // плитка Свода, чьи нарушители показаны вместо таблицы городов
 let weekRows = [], anCity = '';          // Аналитика: v_week_control и выбранный там город ('' — все)
 let weekError = null;                    // текст ошибки загрузки v_week_control
-let optRows = [], optDrivers = [], optCity = '', optError = null;   // Оптимизация: v_opt_period, v_opt_driver, город
+let optRows = [], optDocs = [], optCars = [], optCity = '', optError = null;   // Оптимизация: v_opt_period, v_opt_doc, v_opt_car_month, город
 const cfg = k => n(settings[k]);
 
 function filters(){
@@ -930,8 +930,9 @@ async function loadData(){
       apiAll('v_week_control?select=*&order=week_start,city').then(rows => ({ rows }), error => ({ rows:[], error })),
       /* Оптимизация — так же: вся история, сбой виден только в её разделе */
       Promise.all([apiAll('v_opt_period?select=*&order=period,period_start,city'),
-        apiAll('v_opt_driver?select=*&order=month,city,driver_name')])
-        .then(([rows, drivers]) => ({ rows, drivers }), error => ({ rows:[], drivers:[], error })),
+        apiAll('v_opt_doc?select=*&order=month,city,driver_name'),
+        apiAll('v_opt_car_month?select=*&order=month,city,plate_key')])
+        .then(([rows, docs, cars]) => ({ rows, docs, cars }), error => ({ rows:[], docs:[], cars:[], error })),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
@@ -942,7 +943,7 @@ async function loadData(){
     routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null, ctl:ctlBy.get(x.route_id) || null }));
     syncLog = l; imgLoads = il; imgSync = is;
     weekRows = wk.rows; weekError = wk.error ? wk.error.message : null;
-    optRows = op.rows; optDrivers = op.drivers; optError = op.error ? op.error.message : null;
+    optRows = op.rows; optDocs = op.docs; optCars = op.cars; optError = op.error ? op.error.message : null;
     aliasMap = new Map(al.map(x => [x.alias_key, x.plate_key]));
     loaded = { from:f.from, to:f.to, city:f.city };
     if (openRoute && !routes.some(x => x.route_id === openRoute)){ openRoute = null; detailSeq++; dropRouteMap(); }
@@ -2106,7 +2107,7 @@ function renderAnalytics(){
 
 /* ============ Оптимизация: км на машину в рабочий день, 2026 (факт Dextra) против того же месяца 2025 ============ */
 /* Основа — факт Dextra (правило проекта), IMG — ориентир за те же дни. База 2025 — файл «ГСМ и амортизация»
-   (= путевые листы), документы водителей — base_km_driver. Расчёт — в v_opt_period и v_opt_driver; цель и
+   (= путевые листы), документы водителей — base_km_driver. Расчёт — в v_opt_period, v_opt_doc и v_opt_car_month; цель и
    праздники — settings opt_target_pct и opt_days_off. */
 const MONTHS_RU = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 const monthName = iso => MONTHS_RU[Number(iso.slice(5, 7)) - 1] + ' ' + iso.slice(0, 4);
@@ -2276,8 +2277,9 @@ function renderOptimization(){
     'км, делённые на водителей × рабочие дни. IMG — ориентир: км за весь день той же машины в те же дни. Воскресенья, субботы вне ' +
     'сезона и праздники (настройка opt_days_off) не считаются. Факт Dextra до ' + ruDate(settings.dextra_return_fix_date) +
     ' — без дороги на склад. Период и город сверху на раздел не влияют; наведите на неделю или месяц — подробности.';
-  $('note-optd').textContent = 'Документ 2025 — путевой лист (км и дни из листа) или ведомость амортизации (дней в ней нет — км делятся на рабочие дни месяца). ' +
-    '2026 — дни водителя с маршрутом Dextra после обкатки в тот же месяц: факт Dextra в день; IMG — км за весь день машины маршрута.';
+  $('note-optd').textContent = 'Кто именно ездил — не важно: сравниваются км машины в день. 2025 — путевой лист (км и дни из листа) ' +
+    'или ведомость амортизации (дней в ней нет — км делятся на рабочие дни месяца). 2026 — машина по Dextra в тот же месяц: дни с ' +
+    'маршрутом после обкатки и фактом км, факт Dextra в день; IMG — ориентир, км за весь день машины.';
   const weeks = optSeries('week', optCity, today);
   const months = optSeries('month', optCity, today);
   if (optError || !months.length){
@@ -2324,39 +2326,41 @@ function renderOptimization(){
   renderOptDrivers(today);
 }
 
-/* водители: документ 2025 против того же месяца 2026 — только месяцы, которые в 2026 уже начались */
+/* машины месяца: 2025 по документам и 2026 по Dextra одним списком — без сопоставления водителей
+   (правило пользователя: важны км машины, а не кто ездил); только месяцы, которые в 2026 уже начались */
 function renderOptDrivers(today){
   if (optError){
-    put('tbl-optd', emptyBox('Водители не загрузились', optError));
-    csvTables.optd = { cols:[], rows:[], file:fileName('optimizaciya_voditeli') };
+    put('tbl-optd', emptyBox('Машины не загрузились', optError));
+    csvTables.optd = { cols:[], rows:[], file:fileName('optimizaciya_mashiny') };
     return;
   }
   const nowMonth = today.slice(0, 7);
-  const ym = iso => String(Number(iso.slice(0, 4)) + 1) + iso.slice(4, 7);   // тот же месяц через год
-  const rows = optDrivers.filter(r => (!optCity || r.city === optCity) && ym(r.month) <= nowMonth)
-    .sort((a, b) => byText(b.month, a.month) || byText(a.city, b.city) || byText(a.driver_name, b.driver_name));
-  const ch = r => changePct(n(r.fact_per_day), n(r.base_per_day));
+  const next = iso => String(Number(iso.slice(0, 4)) + 1) + iso.slice(4, 7);   // ГГГГ-ММ того же месяца через год
+  const inCity = r => !optCity || r.city === optCity;
+  const rows = [
+    ...optDocs.filter(r => inCity(r) && next(r.month) <= nowMonth).map(r => ({ mon:next(r.month), city:r.city, year:2025,
+      driver:r.driver_name, plate:r.plate_key, source:r.source, days:n(r.days), km:n(r.km), perDay:n(r.per_day), plan:null, img:null,
+      daysTip:r.work_days ? null : 'в ведомости дней нет — рабочие дни месяца' })),
+    ...optCars.filter(inCity).map(r => ({ mon:r.month.slice(0, 7), city:r.city, year:2026, driver:r.drivers, plate:r.plate_key,
+      source:'Dextra', days:n(r.fact_days), km:n(r.dx_km), perDay:n(r.fact_per_day), plan:n(r.plan_per_day), img:n(r.img_per_day),
+      daysTip:`дней с маршрутом ${int(n(r.days))}, с фактом ${int(n(r.fact_days))}; IMG — дней ${int(n(r.img_days))}` })),
+  ].sort((a, b) => byText(b.mon, a.mon) || byText(cityName(a.city), cityName(b.city)) || a.year - b.year || (b.perDay ?? -1) - (a.perDay ?? -1));
   const cols = [
-    { t:'Месяц', v:r => MONTHS_RU[Number(r.month.slice(5, 7)) - 1] + ` ${r.month.slice(0, 4)} → ${ym(r.month).slice(0, 4)}` +
-      (ym(r.month) === nowMonth ? ' (идёт)' : '') },
+    { t:'Месяц', v:r => MONTHS_RU[Number(r.mon.slice(5, 7)) - 1] + (r.mon === nowMonth ? ' (идёт)' : '') },
     ...(optCity ? [] : [{ t:'Город', v:r => cityName(r.city) }]),
-    { t:'Водитель', v:r => r.driver_name, weak:r => !r.courier_id, title:r => r.courier_id ? null : 'в Dextra сейчас не работает' },
-    { t:'Документ', v:r => r.source },
-    { t:'Машина 2025', v:r => r.base_plate, mono:true },
-    { t:'Км 2025', v:r => n(r.base_km), num:true, f:int },
-    { t:'Дней 2025', v:r => n(r.base_days), num:true, f:int, title:r => r.work_days ? null : 'в ведомости дней нет — рабочие дни месяца' },
-    { t:'2025, км в день', v:r => n(r.base_per_day), num:true, f:km },
-    { t:'Машина 2026', v:r => r.plates, mono:true },
-    { t:'Дней 2026', tip:'дней с маршрутом Dextra после обкатки и фактом км', v:r => n(r.fact_days), num:true, f:int,
-      title:r => `дней с маршрутом ${int(n(r.days))}` },
-    { t:'2026 Dextra, км в день', v:r => n(r.fact_per_day), num:true, f:km },
-    { t:'Изменение', v:ch, num:true, f:signedPct, bad:r => (ch(r) ?? 0) > 0 },
-    { t:'План Dextra в день', v:r => n(r.plan_per_day), num:true, f:km },
-    { t:'IMG в день (ориентир)', v:r => n(r.img_per_day), num:true, f:km, title:r => `дней с данными IMG ${int(n(r.img_days))}` },
+    { t:'Год', v:r => r.year, mono:true, weak:r => r.year === 2025 },
+    { t:'Водитель', v:r => r.driver },
+    { t:'Машина', v:r => r.plate, mono:true },
+    { t:'Источник', v:r => r.source },
+    { t:'Дней', v:r => r.days, num:true, f:int, title:r => r.daysTip },
+    { t:'Км за месяц', v:r => r.km, num:true, f:int },
+    { t:'Км в день', tip:'2025 — путевой лист, 2026 — факт Dextra', v:r => r.perDay, num:true, f:km },
+    { t:'План Dextra в день', v:r => r.plan, num:true, f:km },
+    { t:'IMG в день (ориентир)', v:r => r.img, num:true, f:km },
   ];
-  put('tbl-optd', table(cols, rows, { empty:'Документов по водителям нет',
-    emptyHint:optCity ? 'По этому городу путевых листов или ведомости ещё не загружали.' : 'Путевые листы или ведомости ещё не загружали.' }));
-  csvTables.optd = { cols, rows, file:`optimizaciya_voditeli_${optCity || 'vse'}_${today}.csv` };
+  put('tbl-optd', table(cols, rows, { empty:'Машин нет',
+    emptyHint:optCity ? 'По этому городу нет ни путевых листов 2025, ни маршрутов Dextra после обкатки.' : 'Нет ни путевых листов, ни маршрутов.' }));
+  csvTables.optd = { cols, rows, file:`optimizaciya_mashiny_${optCity || 'vse'}_${today}.csv` };
 }
 
 /* ============ разделы (боковая панель) ============ */
@@ -2429,7 +2433,7 @@ async function signOut(reason){
   loaded = null; openRoute = null; openDay = null; routeHost = 'det'; focusCheck = null;
   weekRows = []; anCity = ''; weekError = null;
   setPressed('f-an-city', b => b.dataset.city === '');
-  optRows = []; optDrivers = []; optCity = ''; optError = null;
+  optRows = []; optDocs = []; optCars = []; optCity = ''; optError = null;
   setPressed('f-opt-city', b => b.dataset.city === '');
   aliasMap = new Map(); imgLoads = []; imgSync = []; imgDraft = []; knownVehicles = null;
   $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');

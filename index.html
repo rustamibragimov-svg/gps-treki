@@ -83,6 +83,9 @@
     font-size:12px;font-weight:500;cursor:pointer;transition:background .15s,color .15s}
   .pill:hover{background:var(--muted);color:var(--fg)}
   .pill[aria-pressed=true]{background:var(--primary);color:#fff}
+  .pill.apart{margin-left:12px;position:relative}
+  .pill.apart::before{content:'';position:absolute;left:-8px;top:4px;bottom:4px;border-left:1px solid var(--border)}
+  .pill.apart ~ .pill.apart{margin-left:0} .pill.apart ~ .pill.apart::before{content:none}
   main{flex:1;overflow:auto;padding:16px 24px 40px}
 
   /* ---------- элементы ---------- */
@@ -443,11 +446,13 @@ const TZ       = 'Asia/Tashkent';
 const TZ_OFFSET = '+05:00';              // Ташкент без летнего времени
 const PAGE     = 1000;                   // PostgREST отдаёт не больше 1000 строк за раз
 const DEFAULT_DAYS = 14;
-const CITY_NAMES = { FERGHANA:'Фергана', KOKAND:'Коканд', NAMANGAN:'Наманган', ANDIJAN:'Андижан' };
+const CITY_NAMES = { FERGHANA:'Фергана', KOKAND:'Коканд', NAMANGAN:'Наманган', ANDIJAN:'Андижан', TASHKENT:'Ташкент' };
+const CITY_GROUPS = ['f-city', 'f-an-city', 'f-opt-city'];   // кнопки города: Свод/Детализация, Аналитика, Оптимизация
 /* без них часть проверок молча выключится — страница говорит об этом вслух */
 const REQUIRED_SETTINGS = ['quick_close_sec', 'batch_points', 'idle_min', 'leg_min_km', 'leg_speed_kmh',
   'day_end_ceiling', 'day_start_floor', 'dextra_return_fix_date', 'return_cap_minutes', 'high_season_from', 'high_season_to',
-  'km_warn', 'km_bad', 'not_visited_m', 'not_visited_points', 'offroute_far_m', 'offroute_min_km', 'map_stop_min', 'map_close_far_m'];
+  'km_warn', 'km_bad', 'not_visited_m', 'not_visited_points', 'offroute_far_m', 'offroute_min_km', 'map_stop_min', 'map_close_far_m',
+  'separate_cities'];
 /* четыре проверки маршрута (состояния и цифры считает v_route_control) */
 const CHECKS = ['c1', 'c2', 'c3', 'c4'];
 const CHECK_NAMES = { c1:'План ↔ факт Dextra', c2:'Факт Dextra ↔ IMG', c3:'Точки: план ↔ закрыто', c4:'Вне маршрута' };
@@ -941,6 +946,33 @@ function setPressed(groupId, pick){
 }
 function setCity(code){ cityFilter = code; setPressed('f-city', b => b.dataset.city === code); }
 
+/* города из settings.separate_cities (Ташкент) смотрятся только отдельно: не входят в «Все»
+   и в итоги по всем городам (итоги v_week_control и v_opt_period база считает так же) */
+function separateCities(){
+  return new Set(String(settings.separate_cities ?? '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean));
+}
+/* «Все» ('') — города без отдельных; выбранный город — только он */
+const inCityPick = (pick, sep) => r => pick ? r.city === pick : !sep.has(r.city);
+
+function buildCityPills(groupId, allLabel){
+  $(groupId).append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, allLabel));
+  for (const [code, name] of Object.entries(CITY_NAMES)) $(groupId).append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
+}
+/* отдельные города — в конец ряда, за черту; у «Все» подсказка, кого в нём нет */
+function markSeparateCities(){
+  const sep = separateCities();
+  const names = [...sep].map(c => CITY_NAMES[c] || c).join(', ');
+  for (const id of CITY_GROUPS){
+    const pills = [...$(id).querySelectorAll('.pill')];
+    for (const b of pills){
+      const apart = sep.has(b.dataset.city);
+      b.classList.toggle('apart', apart);
+      if (apart && b !== $(id).lastElementChild) $(id).append(b);   // перенос снимает фокус — только когда нужно
+      if (b.dataset.city === '') b.title = names ? 'Без городов, которые смотрятся отдельно: ' + names : '';
+    }
+  }
+}
+
 /* ============ загрузка ============ */
 /* true — данные загружены и показаны; false — нет (ошибка, неверный период, обгон) */
 async function loadData(){
@@ -974,10 +1006,12 @@ async function loadData(){
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
     settings = Object.fromEntries(s.map(x => [x.key, x.value]));
+    markSeparateCities();
     /* IMG и четыре проверки маршрута — отдельными полями, а не правкой строки из базы */
     const imgBy = new Map(ri.map(x => [x.route_id, x]));
     const ctlBy = new Map(ct.map(x => [x.route_id, x]));
-    routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null, ctl:ctlBy.get(x.route_id) || null }));
+    routes = r.filter(inCityPick(f.city, separateCities()))
+      .map(x => ({ ...x, img:imgBy.get(x.route_id) || null, ctl:ctlBy.get(x.route_id) || null }));
     syncLog = l; imgLoads = il; imgSync = is;
     weekRows = wk.rows; weekError = wk.error ? wk.error.message : null;
     optRows = op.rows; optDocs = op.docs; optCars = op.cars; optError = op.error ? op.error.message : null;
@@ -2506,7 +2540,7 @@ function renderOptDrivers(today){
   }
   const nowMonth = today.slice(0, 7);
   const next = iso => String(Number(iso.slice(0, 4)) + 1) + iso.slice(4, 7);   // ГГГГ-ММ того же месяца через год
-  const inCity = r => !optCity || r.city === optCity;
+  const inCity = inCityPick(optCity, separateCities());
   const rows = [
     ...optDocs.filter(r => inCity(r) && next(r.month) <= nowMonth).map(r => ({ mon:next(r.month), city:r.city, year:2025,
       driver:r.driver_name, plate:r.plate_key, source:r.source, days:n(r.days), km:n(r.km), perDay:n(r.per_day), plan:null, img:null,
@@ -2677,12 +2711,9 @@ $('img-write').addEventListener('click', writeImg);
       'Эта страница открывается только напрямую: ', h('a', { href:location.href, target:'_top', rel:'noopener' }, location.href)));
     return;
   }
-  $('f-city').append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, 'Все'));
-  for (const [code, name] of Object.entries(CITY_NAMES)) $('f-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
-  $('f-an-city').append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, 'Все города'));
-  for (const [code, name] of Object.entries(CITY_NAMES)) $('f-an-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
-  $('f-opt-city').append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, 'Все города'));
-  for (const [code, name] of Object.entries(CITY_NAMES)) $('f-opt-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
+  buildCityPills('f-city', 'Все');
+  buildCityPills('f-an-city', 'Все города');
+  buildCityPills('f-opt-city', 'Все города');
   const today = localDate(new Date());
   const from = new Date(Date.parse(today + 'T00:00:00Z') - (DEFAULT_DAYS - 1) * 864e5).toISOString().slice(0, 10);
   $('f-from').value = from; $('f-to').value = today;

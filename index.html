@@ -150,6 +150,31 @@
   .strip i.ok{background:var(--success)} .strip i.warn{background:var(--warning)} .strip i.fail{background:var(--danger)}
   .st{font-family:var(--mono);font-size:12px;white-space:nowrap}
   .st.ok{color:var(--success-fg)} .st.warn{color:var(--warning-fg)} .st.fail{color:var(--danger-fg);font-weight:600} .st.na{color:var(--muted-fg)}
+  /* светофор в целых км у проверок 1 и 2: зелёный · жёлтый · красный */
+  .zones{display:flex;flex-wrap:wrap;gap:4px 10px;font-family:var(--mono);font-size:11px;margin-bottom:4px}
+  .zones i{font-style:normal;white-space:nowrap}
+  .zones .ok{color:var(--success-fg)} .zones .warn{color:var(--warning-fg)} .zones .fail{color:var(--danger-fg)}
+  /* Аналитика: понедельная динамика */
+  .chart{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-card);padding:12px 12px 8px;margin-bottom:16px}
+  .chart h3{font-size:14px;font-weight:600;margin:0 0 2px}
+  .chart p{font-size:12px;color:var(--muted-fg);margin:0 0 6px}
+  .chart p .ok{color:var(--success-fg)} .chart p .fail{color:var(--danger-fg)}
+  .chart .scroll{overflow-x:auto}
+  .chart svg{display:block;width:100%;height:auto;min-width:560px}   /* на телефоне — прокрутка, а не мелкие подписи */
+  .chart svg text{font-size:11px;fill:var(--muted-fg);font-family:var(--mono)}
+  .chart .grid{stroke:var(--border);stroke-dasharray:3 3}
+  .chart .axis{stroke:var(--muted-fg)}
+  .chart .ref-ok{stroke:var(--success);stroke-dasharray:4 4}
+  .chart .ref-bad{stroke:var(--danger);stroke-dasharray:4 4}
+  .chart .fix{stroke:var(--muted-fg);stroke-dasharray:2 3}
+  .chart rect.ok{fill:var(--success);opacity:.28} .chart rect.warn{fill:var(--warning);opacity:.32} .chart rect.fail{fill:var(--danger);opacity:.26}
+  .chart .line{fill:none;stroke:var(--primary);stroke-width:2}
+  .chart .line.open{stroke:var(--muted-fg);stroke-dasharray:5 4}
+  .chart circle{fill:var(--card);stroke:var(--primary);stroke-width:2}
+  .chart circle.open{stroke:var(--muted-fg)}
+  .chart .hit{fill:transparent} .chart .hit:hover{fill:var(--hover);opacity:.5}
+  .trend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;margin:0 0 6px}
+  .trend b{font-family:var(--mono)} .trend .better{color:var(--success-fg)} .trend .worse{color:var(--danger-fg)}
   .kpi.route-check b{font-size:15px;font-family:var(--mono);font-weight:600}
   /* раскрытая строка: водители города за день */
   tr.open td{background:var(--info-bg)}
@@ -236,6 +261,8 @@
       <svg class="i" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg></button>
     <button role="tab" id="t-det" aria-controls="p-det" aria-selected="false" aria-label="Детализация по дням" title="Детализация">
       <svg class="i" viewBox="0 0 24 24"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg></button>
+    <button role="tab" id="t-an" aria-controls="p-an" aria-selected="false" aria-label="Аналитика по неделям" title="Аналитика">
+      <svg class="i" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></svg></button>
     <button role="tab" id="t-sync" aria-controls="p-sync" aria-selected="false" aria-label="Загрузка данных" title="Загрузка данных">
       <svg class="i" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
     <button role="tab" id="t-cfg" aria-controls="p-cfg" aria-selected="false" aria-label="Настройки расчёта" title="Настройки">
@@ -288,6 +315,16 @@
         <p class="note" id="note-det"></p>
         <div class="tbl" id="tbl-det"></div>
         <div id="route-detail"></div>
+      </section>
+
+      <section role="tabpanel" id="p-an" aria-labelledby="t-an" hidden>
+        <div class="bar"><h2>Динамика по неделям</h2>
+          <div class="fgroup" id="f-an-city" role="group" aria-label="Город для динамики"></div>
+          <button class="btn" data-csv="an">
+            <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
+        <p class="note" id="note-an"></p>
+        <div id="an-charts"></div>
+        <div class="tbl" id="tbl-an"></div>
       </section>
 
       <section role="tabpanel" id="p-sync" aria-labelledby="t-sync" hidden>
@@ -810,6 +847,8 @@ let cityFilter = '';
 let openDay = null, detSort = 'date';   // раскрытая строка «день|город» в Детализации и её порядок
 let routeHost = 'det';                   // где открыта карточка маршрута: det | sum
 let focusCheck = null;                   // плитка Свода, чьи нарушители показаны вместо таблицы городов
+let weekRows = [], anCity = '';          // Аналитика: v_week_control и выбранный там город ('' — все)
+let weekError = null;                    // текст ошибки загрузки v_week_control
 const cfg = k => n(settings[k]);
 
 function filters(){
@@ -836,7 +875,7 @@ async function loadData(){
   $('btn-load').disabled = true;
   try {
     const range = `route_date=gte.${q(f.from)}&route_date=lte.${q(f.to)}` + (f.city ? `&city=eq.${q(f.city)}` : '');
-    const [s, r, l, ri, al, il, is, ct] = await Promise.all([
+    const [s, r, l, ri, al, il, is, ct, wk] = await Promise.all([
       api('settings?select=key,value,note&order=key'),
       apiAll(`v_route_metrics?select=*&${range}&order=route_date.desc,city,courier_name,route_id`),
       api('sync_log?select=*&order=id.desc&limit=200'),
@@ -845,6 +884,9 @@ async function loadData(){
       api('img_loads?select=*&order=id.desc&limit=300'),
       api('img_sync_log?select=*&dry_run=eq.false&order=id.desc&limit=300'),
       apiAll(`v_route_control?select=*&${range}&order=route_id`),
+      /* Аналитика — вся история, от периода и города сверху не зависит; её сбой не должен
+         гасить Свод и Детализацию — ошибка показывается только в её разделе */
+      apiAll('v_week_control?select=*&order=week_start,city').then(rows => ({ rows }), error => ({ rows:[], error })),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
@@ -854,6 +896,7 @@ async function loadData(){
     const ctlBy = new Map(ct.map(x => [x.route_id, x]));
     routes = r.map(x => ({ ...x, img:imgBy.get(x.route_id) || null, ctl:ctlBy.get(x.route_id) || null }));
     syncLog = l; imgLoads = il; imgSync = is;
+    weekRows = wk.rows; weekError = wk.error ? wk.error.message : null;
     aliasMap = new Map(al.map(x => [x.alias_key, x.plate_key]));
     loaded = { from:f.from, to:f.to, city:f.city };
     if (openRoute && !routes.some(x => x.route_id === openRoute)){ openRoute = null; detailSeq++; dropRouteMap(); }
@@ -906,11 +949,20 @@ function aggregate(rows){
   };
 }
 /* правила проверок словами — пороги из settings, в исходнике их нет */
+/* светофор проверок 1 и 2 в целых км (как считает v_route_control): 0–5 · 6–10 · от 11 */
+const KM_CHECKS = ['c1', 'c2'];
+function zoneLabels(){
+  const w = cfg('km_warn'), b = cfg('km_bad');
+  if (w === null || b === null) return { ok:'зелёный', warn:'жёлтый', fail:'красный' };
+  return { ok:`0–${w} км`, warn:`${w + 1}–${b} км`, fail:`от ${b + 1} км` };
+}
 function checkRules(){
   const v = k => cfg(k) ?? '—';
+  const z = zoneLabels();
+  const zones = `разница округляется до целого км: ${z.ok} — зелёный (норма), ${z.warn} — жёлтый (присмотреться), ${z.fail} — красный (нарушение).`;
   return {
-    c1:`Факт GPS Dextra минус план, в любую сторону: до ${v('km_warn')} км — норма, до ${v('km_bad')} км — присмотреться, больше — нарушение.`,
-    c2:`Км IMG в окне маршрута минус факт Dextra, в любую сторону: до ${v('km_warn')} км — норма, до ${v('km_bad')} км — присмотреться, больше — нарушение.`,
+    c1:`Факт GPS Dextra минус план, в любую сторону; ${zones}`,
+    c2:`Км IMG в окне маршрута минус факт Dextra, в любую сторону; ${zones}`,
     c3:`Нарушение: закрыто меньше точек, чем в плане (без отменённых), или от ${v('not_visited_points')} закрытых точек машина по треку IMG не подъезжала ближе ${v('not_visited_m')} м.`,
     c4:`Нарушение: машина по треку IMG проехала больше ${v('offroute_min_km')} км дальше ${v('offroute_far_m')} м от плановой дороги Dextra и от всех точек маршрута.`,
   };
@@ -955,7 +1007,8 @@ const fileName = base => `${base}_${loaded ? loaded.from + '_' + loaded.to : 'pu
 /* ============ отрисовка ============ */
 /* Каждый раздел рисуется отдельно: ошибка в одном не должна гасить остальные. */
 function renderAll(){
-  const parts = [['Свод', renderSummary], ['Детализация', renderDetail], ['Загрузка', renderSync], ['Настройки', renderSettings]];
+  const parts = [['Свод', renderSummary], ['Детализация', renderDetail], ['Аналитика', renderAnalytics],
+    ['Загрузка', renderSync], ['Настройки', renderSettings]];
   const failed = [];
   for (const [name, fn] of parts){
     try { fn(); } catch(e){ failed.push(`${name}: ${e.message}`); }
@@ -980,7 +1033,14 @@ function checkTile(k, a, rule){
     h('b', { class:c.fail ? 'danger' : c.checked ? 'success' : null }, int(c.fail), h('small', null, ` из ${int(c.checked)}`)),
     c.checked ? h('div', { class:'strip', 'aria-hidden':'true' },
       ...['ok', 'warn', 'fail'].map(s => h('i', { class:s, style:`flex-grow:${c[s]}` }))) : null,
+    KM_CHECKS.includes(k) && c.checked ? zonesLine(c) : null,
     h('em', null, sub));
+}
+/* «0–5 км: 26 · 6–10 км: 17 · от 11 км: 63» — сколько маршрутов в каждом цвете */
+function zonesLine(c){
+  const z = zoneLabels();
+  /* <i>, а не <span>: подписи плитки (.kpi span) — блочные и со стрелкой */
+  return h('div', { class:'zones' }, ...['ok', 'warn', 'fail'].map(s => h('i', { class:s }, `${z[s]}: ${int(c[s])}`)));
 }
 
 function renderSummary(){
@@ -1830,8 +1890,173 @@ function renderSettings(){
   ], settingRows));
 }
 
+/* ============ аналитика: проверки 1 и 2 по неделям (пн–вс) ============ */
+/* Образец — «Динамика» контрольных точек в 3PL Tracking: линия — главный показатель недели,
+   столбики — сколько маршрутов, пунктир — границы зон, серый пунктир — неделя ещё идёт.
+   Показатель — медиана |разницы| в км: среднее тянут единичные маршруты с сотнями км. */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function sv(tag, attrs, ...kids){
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined) e.setAttribute(k, v);
+  for (const kid of kids.flat()){
+    if (kid === null || kid === undefined || kid === false) continue;
+    e.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return e;
+}
+const addDays = (iso, d) => new Date(Date.parse(iso + 'T00:00:00Z') + d * 864e5).toISOString().slice(0, 10);
+const shortDate = iso => iso.slice(8, 10) + '.' + iso.slice(5, 7);
+const pct = (a, b) => b ? Math.round(a / b * 100) : null;
+const pctText = v => v === null ? '—' : v + '%';
+
+/* строки недель одного города ('' — итог по всем: в v_week_control у него city is null) */
+function weekSeries(city, today){
+  return weekRows.filter(r => (r.city || '') === city)
+    .sort((a, b) => byText(a.week_start, b.week_start))
+    .map(r => ({ ...r, open:addDays(r.week_start, 6) >= today }));
+}
+const weekStat = (r, k) => {
+  const ok = n(r[k + '_ok']) || 0, warn = n(r[k + '_warn']) || 0, fail = n(r[k + '_fail']) || 0, checked = n(r[k + '_checked']) || 0;
+  return { ok, warn, fail, checked, okPct:pct(ok, checked), median:n(r[k + '_median_km']), avg:n(r[k + '_avg_km']) };
+};
+function weekTip(r, k){
+  const s = weekStat(r, k), z = zoneLabels();
+  return [`Неделя ${shortDate(r.week_start)}–${shortDate(addDays(r.week_start, 6))}` + (r.open ? ' · ещё идёт' : ''),
+    `проверено маршрутов: ${int(s.checked)}`,
+    `${z.ok}: ${int(s.ok)} (${pctText(s.okPct)})`, `${z.warn}: ${int(s.warn)} (${pctText(pct(s.warn, s.checked))})`,
+    `${z.fail}: ${int(s.fail)} (${pctText(pct(s.fail, s.checked))})`,
+    `медиана разницы ${km(s.median)} км · среднее ${km(s.avg)} км`].join('\n');
+}
+
+function weekChart(rows, k){
+  const W = 900, H = 230, L = 40, R = 44, T = 12, B = 24;
+  const pw = W - L - R, ph = H - T - B, band = pw / rows.length;
+  const warn = cfg('km_warn'), bad = cfg('km_bad');
+  const stats = rows.map(r => weekStat(r, k));
+  const maxMed = Math.max(0, ...stats.map(s => s.median ?? 0));
+  const yMax = Math.max(5, Math.ceil(Math.max(maxMed, (bad ?? 0) + 2) / 5) * 5);
+  const y = v => T + ph - Math.min(v, yMax) / yMax * ph;
+  const maxCnt = Math.max(1, ...stats.map(s => s.checked));
+  const hCnt = v => v / maxCnt * ph * 0.85;          // столбики — своя шкала, без второй оси
+  const cx = i => L + band * i + band / 2;
+  /* недель много — подписи дат и значений через одну-две, последняя неделя подписана всегда */
+  const every = Math.ceil(40 / band);
+  const labelled = i => i === rows.length - 1 || (rows.length - 1 - i) % every === 0;
+  const g = [];
+  for (let i = 0; i <= 5; i++){
+    const v = yMax / 5 * i;
+    g.push(sv('line', { class:'grid', x1:L, x2:W - R, y1:y(v), y2:y(v) }),
+      sv('text', { x:L - 6, y:y(v) + 4, 'text-anchor':'end' }, int(v)));
+  }
+  g.push(sv('line', { class:'axis', x1:L, x2:W - R, y1:T + ph, y2:T + ph }));
+  /* столбик недели: снизу зелёные, над ними жёлтые и красные */
+  stats.forEach((s, i) => {
+    const bw = Math.min(56, band * 0.6), x0 = cx(i) - bw / 2;
+    let top = T + ph;
+    for (const st of ['ok', 'warn', 'fail']){
+      const hh = hCnt(s[st]);
+      if (hh > 0){ top -= hh; g.push(sv('rect', { class:st, x:x0, y:top, width:bw, height:hh })); }
+    }
+    if (labelled(i)) g.push(sv('text', { x:cx(i), y:H - 6, 'text-anchor':'middle' }, shortDate(rows[i].week_start)));
+  });
+  /* границы зон: зона считается по целым км, поэтому 5,4 — ещё зелёный, а граница — на 5,5 */
+  for (const [v, cls] of [[warn, 'ref-ok'], [bad, 'ref-bad']]){
+    if (v === null || v + 0.5 > yMax) continue;
+    g.push(sv('line', { class:cls, x1:L, x2:W - R, y1:y(v + 0.5), y2:y(v + 0.5) }),
+      sv('text', { x:W - R + 4, y:y(v + 0.5) + 4 }, `до ${int(v)}`));
+  }
+  /* до этой даты Dextra не считала дорогу на склад — факт ниже плана не значит экономию */
+  const fix = settings.dextra_return_fix_date;
+  const fixAt = k === 'c1' && fix ? rows.findIndex(r => r.week_start <= fix && fix <= addDays(r.week_start, 6)) : -1;
+  if (fixAt >= 0){
+    const day = (Date.parse(fix) - Date.parse(rows[fixAt].week_start)) / 864e5;   // 0 — пн … 6 — вс
+    const fx = L + band * (fixAt + day / 7);
+    g.push(sv('line', { class:'fix', x1:fx, x2:fx, y1:T, y2:T + ph }),
+      sv('text', { x:fx + 4, y:T + 10 }, `с ${shortDate(fix)} в факте дорога на склад`));
+  }
+  /* линия медианы: сплошная по прошедшим неделям, серый пунктир к неделе, что ещё идёт */
+  const pts = stats.map((s, i) => s.median === null ? null : { x:cx(i), y:y(s.median), v:s.median, open:rows[i].open });
+  const closed = pts.filter(p => p && !p.open);
+  const open = pts.filter(p => p && p.open);
+  const path = ps => ps.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' ');
+  if (closed.length > 1) g.push(sv('path', { class:'line', d:path(closed) }));
+  if (open.length) g.push(sv('path', { class:'line open', d:path(closed.slice(-1).concat(open)) }));
+  pts.forEach((p, i) => {
+    if (!p) return;
+    g.push(sv('circle', { class:p.open ? 'open' : null, cx:p.x, cy:p.y, r:3.5 }));
+    if (labelled(i)) g.push(sv('text', { x:p.x, y:p.y - 8, 'text-anchor':'middle' }, km(p.v)));
+  });
+  /* подсказка — на всю полосу недели */
+  rows.forEach((r, i) => g.push(sv('rect', { class:'hit', x:L + band * i, y:T, width:band, height:ph }, sv('title', null, weekTip(r, k)))));
+  return sv('svg', { viewBox:`0 0 ${W} ${H}`, role:'img', 'aria-label':`${CHECK_NAMES[k]}: медиана разницы по неделям` }, g);
+}
+
+/* последняя прошедшая неделя против предыдущей — «стало лучше или хуже» словами */
+function weekTrend(rows, k){
+  const done = rows.filter(r => !r.open && weekStat(r, k).checked);
+  if (!done.length) return null;
+  const curRow = done[done.length - 1], prevRow = done.length > 1 ? done[done.length - 2] : null;
+  const cur = weekStat(curRow, k), prev = prevRow ? weekStat(prevRow, k) : null;
+  /* между ними может быть неделя без проверенных маршрутов — тогда называем её дату */
+  const before = prevRow && prevRow.week_start === addDays(curRow.week_start, -7) ? 'неделей раньше' : `неделя ${prevRow ? shortDate(prevRow.week_start) : ''}`;
+  const mark = (now, was, lowerIsBetter) => {
+    if (now === null || was === null || now === was) return null;
+    const better = lowerIsBetter ? now < was : now > was;
+    return h('span', { class:better ? 'better' : 'worse' }, better ? ' — лучше' : ' — хуже');
+  };
+  const z = zoneLabels();
+  return h('div', { class:'trend' },
+    h('span', null, `Неделя ${shortDate(curRow.week_start)}: медиана `, h('b', null, km(cur.median) + ' км'),
+      prev ? ` (${before} ${km(prev.median)})` : '', prev ? mark(cur.median, prev.median, true) : null),
+    h('span', null, `${z.ok} — `, h('b', null, pctText(cur.okPct)), ` маршрутов`,
+      prev ? ` (${before} ${pctText(prev.okPct)})` : '', prev ? mark(cur.okPct, prev.okPct, false) : null));
+}
+
+function renderAnalytics(){
+  setPressed('f-an-city', b => b.dataset.city === anCity);
+  const today = localDate(new Date());
+  const rows = weekSeries(anCity, today);
+  const z = zoneLabels();
+  $('note-an').textContent = 'Все недели с начала статистики, без обкатки и выходных; период и город сверху на этот раздел не влияют. ' +
+    'Наведите на неделю — подробности.';
+  if (weekError || !rows.length){
+    put('an-charts', weekError
+      ? emptyBox('Динамика не загрузилась', weekError + ' Нажмите «Показать» на Своде, чтобы повторить.')
+      : emptyBox('Недель с маршрутами нет', 'Для этого города статистика ещё не началась.'));
+    $('tbl-an').replaceChildren();
+    csvTables.an = { cols:[], rows:[], file:fileName('dinamika') };
+    return;
+  }
+  $('an-charts').replaceChildren(...KM_CHECKS.map((k, i) => h('div', { class:'chart' },
+    h('h3', null, `${i + 1} · ${CHECK_NAMES[k]}`),
+    h('p', null, 'линия — медиана разницы за неделю, км (ниже — лучше) · столбики — маршруты недели: ',
+      h('span', { class:'ok' }, `зелёный ${z.ok}`), ', жёлтый ', z.warn, ', ', h('span', { class:'fail' }, `красный ${z.fail}`),
+      ' · пунктир: зелёный и красный — границы зон, серый — неделя ещё идёт'),
+    weekTrend(rows, k),
+    h('div', { class:'scroll' }, weekChart(rows, k)))));
+  const col = (k, i) => {
+    const t = `${i + 1} ·`, tip = checkRules()[k];
+    return [
+      { t:`${i + 1} ${CHECK_SHORT[k]}: проверено`, tip, v:r => weekStat(r, k).checked, num:true, f:int },
+      { t:`${t} ${z.ok}`, tip, v:r => weekStat(r, k).ok, num:true, f:int },
+      { t:`${t} ${z.warn}`, tip, v:r => weekStat(r, k).warn, num:true, f:int },
+      { t:`${t} ${z.fail}`, tip, v:r => weekStat(r, k).fail, num:true, f:int, bad:r => weekStat(r, k).fail > 0 },
+      { t:`${t} зелёных`, tip, v:r => weekStat(r, k).okPct, num:true, f:pctText },
+      { t:`${t} медиана, км`, tip, v:r => weekStat(r, k).median, num:true, f:km },
+    ];
+  };
+  const cols = [
+    { t:'Неделя', v:r => `${shortDate(r.week_start)}–${shortDate(addDays(r.week_start, 6))}` + (r.open ? ' (идёт)' : ''), mono:true },
+    { t:'Маршрутов', v:r => n(r.routes), num:true, f:int },
+    ...KM_CHECKS.flatMap(col),
+  ];
+  const desc = [...rows].reverse();
+  put('tbl-an', table(cols, desc));
+  csvTables.an = { cols, rows:desc, file:`dinamika_${anCity || 'vse'}_${today}.csv` };
+}
+
 /* ============ разделы (боковая панель) ============ */
-const TABS = ['t-sum', 't-det', 't-sync', 't-cfg'];
+const TABS = ['t-sum', 't-det', 't-an', 't-sync', 't-cfg'];
 function selectTab(id){
   for (const t of TABS){
     const on = t === id;
@@ -1841,7 +2066,7 @@ function selectTab(id){
   }
   $('page-title').textContent = $(id).getAttribute('aria-label');
   /* загрузка и настройки от периода и города не зависят — фильтры там только мешают */
-  $('filters').hidden = id === 't-sync' || id === 't-cfg';
+  $('filters').hidden = id === 't-sync' || id === 't-cfg' || id === 't-an';
   if (routeMap) routeMap.fit();   // карта, нарисованная в скрытой вкладке, получила размер
 }
 TABS.forEach((t, i) => {
@@ -1898,13 +2123,15 @@ async function signOut(reason){
   loadSeq++; detailSeq++;
   settings = {}; settingRows = []; routes = []; syncLog = [];
   loaded = null; openRoute = null; openDay = null; routeHost = 'det'; focusCheck = null;
+  weekRows = []; anCity = ''; weekError = null;
+  setPressed('f-an-city', b => b.dataset.city === '');
   aliasMap = new Map(); imgLoads = []; imgSync = []; imgDraft = []; knownVehicles = null;
   $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');
   ['tbl-img-preview', 'tbl-img-loads', 'tbl-img-sync'].forEach(id => $(id).replaceChildren());
   for (const k of Object.keys(csvTables)) delete csvTables[k];
-  ['kpis', 'tbl-sum', 'tbl-det', 'route-detail', 'sum-route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg']
+  ['kpis', 'tbl-sum', 'tbl-det', 'route-detail', 'sum-route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg', 'an-charts', 'tbl-an']
     .forEach(id => $(id).replaceChildren());
-  $('note-sum').textContent = ''; $('note-det').textContent = '';
+  $('note-sum').textContent = ''; $('note-det').textContent = ''; $('note-an').textContent = '';
   say('msg', '');
   conn('', '');
   /* следующий вошедший начинает со сводки, а не с чужой вкладки */
@@ -1941,6 +2168,11 @@ $('f-sort').addEventListener('click', e => {
   setPressed('f-sort', x => x === b);
   try { renderDetail(); } catch(err){ say('msg', err.message, 'err'); }
 });
+$('f-an-city').addEventListener('click', e => {
+  const b = e.target.closest('.pill'); if (!b) return;
+  anCity = b.dataset.city;
+  try { renderAnalytics(); } catch(err){ say('msg', err.message, 'err'); }
+});
 document.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => downloadCsv(b.dataset.csv)));
 $('img-pick').addEventListener('click', () => $('img-files').click());
 $('img-files').addEventListener('change', e => {
@@ -1961,6 +2193,8 @@ $('img-write').addEventListener('click', writeImg);
   }
   $('f-city').append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, 'Все'));
   for (const [code, name] of Object.entries(CITY_NAMES)) $('f-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
+  $('f-an-city').append(h('button', { class:'pill', 'data-city':'', 'aria-pressed':'true' }, 'Все города'));
+  for (const [code, name] of Object.entries(CITY_NAMES)) $('f-an-city').append(h('button', { class:'pill', 'data-city':code, 'aria-pressed':'false' }, name));
   const today = localDate(new Date());
   const from = new Date(Date.parse(today + 'T00:00:00Z') - (DEFAULT_DAYS - 1) * 864e5).toISOString().slice(0, 10);
   $('f-from').value = from; $('f-to').value = today;

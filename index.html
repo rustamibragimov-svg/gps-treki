@@ -150,6 +150,7 @@
   .strip i.ok{background:var(--success)} .strip i.warn{background:var(--warning)} .strip i.fail{background:var(--danger)}
   .st{font-family:var(--mono);font-size:12px;white-space:nowrap}
   .st.ok{color:var(--success-fg)} .st.warn{color:var(--warning-fg)} .st.fail{color:var(--danger-fg);font-weight:600} .st.na{color:var(--muted-fg)}
+  .st.run{color:var(--primary)} .kpi b.info{color:var(--primary)}
   /* светофор в целых км у проверок 1 и 2: зелёный · жёлтый · красный */
   .zones{display:flex;flex-wrap:wrap;gap:4px 10px;font-family:var(--mono);font-size:11px;margin-bottom:4px}
   .zones i{font-style:normal;white-space:nowrap}
@@ -338,10 +339,10 @@
         <div class="bar"><h2>Загружено из IMG</h2></div>
         <div class="tbl" id="tbl-img-loads"></div>
         <div class="bar"><h2>IMG — автоматически</h2></div>
-        <p class="note">Поездки IMG загружаются автоматически каждый день в 20:10 по Ташкенту: сегодняшний день и три предыдущих. Ручная загрузка Excel выше остаётся запасным путём.</p>
+        <p class="note">Поездки IMG загружаются автоматически: сегодняшний день — каждый час с 07:10 до 19:10 по Ташкенту, итог — в 20:10 (сегодня и три предыдущих дня). Ручная загрузка Excel выше остаётся запасным путём.</p>
         <div class="tbl" id="tbl-img-sync"></div>
         <div class="bar"><h2>Dextra</h2></div>
-        <p class="note">Маршруты загружаются автоматически каждый день в 20:00 по Ташкенту: сегодняшний день и три предыдущих.</p>
+        <p class="note">Маршруты загружаются автоматически: сегодняшний день — каждый час с 07:00 до 19:00 по Ташкенту, итог — в 20:00 (сегодня и три предыдущих дня). Пока маршрут в пути, Dextra не отдаёт факт км — проверки 1 и 2 появятся после финиша.</p>
         <div class="tbl" id="tbl-sync-city"></div>
         <details class="more"><summary>Журнал загрузок Dextra</summary>
           <div class="tbl" id="tbl-sync"></div>
@@ -377,7 +378,9 @@ const REQUIRED_SETTINGS = ['quick_close_sec', 'batch_points', 'idle_min', 'leg_m
 const CHECKS = ['c1', 'c2', 'c3', 'c4'];
 const CHECK_NAMES = { c1:'План ↔ факт Dextra', c2:'Факт Dextra ↔ IMG', c3:'Точки: план ↔ закрыто', c4:'Вне маршрута' };
 const CHECK_SHORT = { c1:'План → факт', c2:'IMG', c3:'Точки', c4:'Вне маршрута' };
-const CHECK_STATE = { ok:['норма', 'ok'], warn:['присмотреться', 'warn'], fail:['нарушение', 'fail'], na:['проверить нельзя', 'na'] };
+/* run — маршрут сегодняшнего дня ещё едет (только у проверки 3): не нарушение и не в суммах */
+const CHECK_STATE = { ok:['норма', 'ok'], warn:['присмотреться', 'warn'], fail:['нарушение', 'fail'],
+  run:['в пути', 'run'], na:['проверить нельзя', 'na'] };
 
 /* ============ хранилище (только этот браузер) ============ */
 const local = (() => {
@@ -924,18 +927,19 @@ async function loadData(){
 
 /* ============ агрегаты ============ */
 const ctl = r => r.ctl || {};
-const stateOf = (r, k) => ctl(r)[k] || 'na';
+/* незнакомое базе страницы состояние — «проверить нельзя», а не сбой отрисовки */
+const stateOf = (r, k) => { const s = ctl(r)[k]; return Object.hasOwn(CHECK_STATE, s) ? s : 'na'; };
 const routeFails = r => CHECKS.filter(k => stateOf(r, k) === 'fail').length;
 
-/* сколько маршрутов в каждом состоянии проверки; checked — без «проверить нельзя» */
+/* сколько маршрутов в каждом состоянии проверки; checked — без «проверить нельзя» и «в пути» */
 function checkCounts(rows, k){
-  const c = { ok:0, warn:0, fail:0, na:0 };
+  const c = { ok:0, warn:0, fail:0, run:0, na:0 };
   for (const r of rows) c[stateOf(r, k)]++;
   return { ...c, checked:c.ok + c.warn + c.fail };
 }
-/* rows — уже только маршруты статистики; суммы — по тем, где проверка возможна */
+/* rows — уже только маршруты статистики; суммы — по тем, где проверка сделана (маршрут в пути — ещё нет) */
 function aggregate(rows){
-  const can = k => rows.filter(r => stateOf(r, k) !== 'na');
+  const can = k => rows.filter(r => !['na', 'run'].includes(stateOf(r, k)));
   return {
     routes:rows.length,
     plan:sum(can('c1'), r => r.plan_km), gps:sum(can('c1'), r => r.gps_km),
@@ -963,7 +967,7 @@ function checkRules(){
   return {
     c1:`Факт GPS Dextra минус план, в любую сторону; ${zones}`,
     c2:`Км IMG в окне маршрута минус факт Dextra, в любую сторону; ${zones}`,
-    c3:`Нарушение: закрыто меньше точек, чем в плане (без отменённых), или от ${v('not_visited_points')} закрытых точек машина по треку IMG не подъезжала ближе ${v('not_visited_m')} м.`,
+    c3:`Нарушение: закрыто меньше точек, чем в плане (без отменённых), или от ${v('not_visited_points')} закрытых точек машина по треку IMG не подъезжала ближе ${v('not_visited_m')} м. Маршрут сегодняшнего дня с незакрытым финишем до ${settings.day_end_ceiling ?? '—'} — «в пути», не нарушение.`,
     c4:`Нарушение: машина по треку IMG проехала больше ${v('offroute_min_km')} км дальше ${v('offroute_far_m')} м от плановой дороги Dextra и от всех точек маршрута.`,
   };
 }
@@ -978,7 +982,8 @@ function checkText(r, k){
   if (k === 'c3'){
     const nv = n(c.c3_not_visited);
     /* «из», а не «8/9»: Excel прочёл бы дробь в выгрузке как дату */
-    return `${int(n(c.c3_closed))} из ${int(n(c.c3_planned))}` + (nv ? ` · ${int(nv)} без визита` : '');
+    return `${int(n(c.c3_closed))} из ${int(n(c.c3_planned))}` + (nv ? ` · ${int(nv)} без визита` : '') +
+      (stateOf(r, k) === 'run' ? ' · в пути' : '');
   }
   const off = n(c.c4_off_km);
   return off ? `${km(off)} км · до ${km(n(c.c4_max_km))} км от дороги` : 'нет';
@@ -994,7 +999,8 @@ function countCols(){
   return [
     { t:'Маршрутов', v:r => r.routes, num:true, f:int },
     ...CHECKS.map((k, i) => ({ t:`${i + 1} ${CHECK_SHORT[k]}`, tip:R[k], v:r => r[k].fail, num:true, f:int,
-      bad:r => r[k].fail > 0, title:r => `нарушений ${r[k].fail}, присмотреться ${r[k].warn}, проверено ${r[k].checked} из ${r.routes}` })),
+      bad:r => r[k].fail > 0, title:r => `нарушений ${r[k].fail}, присмотреться ${r[k].warn}, проверено ${r[k].checked} из ${r.routes}` +
+        (r[k].run ? `, в пути ${r[k].run}` : '') })),
   ];
 }
 function groupBy(rows, key){
@@ -1022,7 +1028,7 @@ function checkTile(k, a, rule){
   const sub = {
     c1:`план ${km(a.plan)} · факт ${km(a.gps)} км`,
     c2:`Dextra ${km(a.dxForImg)} · IMG ${km(a.imgKm)} км`,
-    c3:`закрыто ${int(a.closed)} из ${int(a.planned)} · без визита ${int(a.notVisited)}`,
+    c3:`закрыто ${int(a.closed)} из ${int(a.planned)} · без визита ${int(a.notVisited)}` + (c.run ? ` · в пути ${int(c.run)}` : ''),
     c4:`${km(a.offKm)} км вне маршрута`,
   }[k];
   const open = () => openCheck(on ? null : k);
@@ -1030,7 +1036,7 @@ function checkTile(k, a, rule){
       'aria-pressed':String(on), 'aria-label':`${CHECK_NAMES[k]}: нарушений ${c.fail} из ${c.checked} проверенных`,
       onclick:open, onkeydown:e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); } } },
     h('span', null, `${CHECKS.indexOf(k) + 1} · ${CHECK_NAMES[k]}`),
-    h('b', { class:c.fail ? 'danger' : c.checked ? 'success' : null }, int(c.fail), h('small', null, ` из ${int(c.checked)}`)),
+    h('b', { class:c.fail ? 'danger' : c.checked ? 'success' : c.run ? 'info' : null }, int(c.fail), h('small', null, ` из ${int(c.checked)}`)),
     c.checked ? h('div', { class:'strip', 'aria-hidden':'true' },
       ...['ok', 'warn', 'fail'].map(s => h('i', { class:s, style:`flex-grow:${c[s]}` }))) : null,
     KM_CHECKS.includes(k) && c.checked ? zonesLine(c) : null,
@@ -1272,7 +1278,7 @@ function routeDetail(r, points, trips, mapNodes){
   const head = h('div', { class:'bar', style:'margin-top:8px' },
     h('h2', null, `${r.courier_name || 'Водитель не указан'} · ${cityName(r.city)} · ${ruDate(r.route_date)} · ${r.plate || 'без номера'}`),
     h('button', { class:'btn', onclick:closeRoute }, 'Закрыть'));
-  const tone = { ok:'success', warn:'warning', fail:'danger', na:null };
+  const tone = { ok:'success', warn:'warning', fail:'danger', run:'info', na:null };
   const kp = h('div', { class:'kpis' }, ...CHECKS.map((k, i) => {
     const s = stateOf(r, k);
     return h('div', { class:'kpi route-check', title:R[k] },
@@ -1291,7 +1297,7 @@ function routeDetail(r, points, trips, mapNodes){
     /* IMG есть, а проверка 4 невозможна — объяснить, иначе «—» выглядит как сбой */
     if (stateOf(r, 'c4') === 'na') notes.push(!r.win_start || !r.win_end
       ? 'Нет окна маршрута — проверка 4 и «без визита» не проверены.'
-      : 'Нет трека машины IMG за окно маршрута или плановой дороги Dextra — проверка 4 не проверена (трек и дорога грузятся каждый вечер; за прошлые дни — разовой загрузкой).');
+      : 'Нет трека машины IMG за окно маршрута или плановой дороги Dextra — проверка 4 не проверена (трек за сегодня грузится каждый час с 07:25 до 19:25, итог дня — вечером; за прошлые дни — разовой загрузкой).');
   }
   const cols = [
     { t:'№ факт', v:p => p.factNo, num:true },

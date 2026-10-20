@@ -224,7 +224,7 @@
   .opt-tip .tr.better b{color:var(--success-fg)} .opt-tip .tr.worse b{color:var(--danger-fg)}
   .opt-tip .k{display:inline-block;width:14px;height:0;border-top:2px solid transparent;transform:translateY(-3px)}
   .opt-tip .k.dx{border-color:var(--primary)} .opt-tip .k.b25{border-color:#94A3B8} .opt-tip .k.goal{border-top-style:dashed;border-color:var(--success)}
-  .opt-tip .k.img{border-color:#EA580C} .opt-tip .k.plan{border-color:var(--fg)}
+  .opt-tip .k.img{border-color:#EA580C} .opt-tip .k.imgw{border-top-style:dotted;border-color:#EA580C} .opt-tip .k.plan{border-color:var(--fg)}
   .opt-tip .tn{color:var(--muted-fg);margin-top:6px;font-size:11px}
   .opt-kpis{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
   .lg.img-dash{width:18px;border-top:2px dashed #EA580C}
@@ -2187,6 +2187,13 @@ const changePct = (now, was) => now === null || !was ? null : Math.round((now - 
 const signedPct = v => v === null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v) + '%';
 const changeCls = c => c === null || c === 0 ? null : c < 0 ? 'better' : 'worse';
 const optChange = r => changePct(n(r.dx_per_day), n(r.base_per_car_day));
+/* факт Dextra против IMG в окне маршрута — по одним и тем же машино-дням (dx_win_per_day, img_win_per_day);
+   плюс — Dextra насчитала больше IMG */
+const optWinDelta = r => { const a = n(r.dx_win_per_day), b = n(r.img_win_per_day); return a === null || b === null ? null : a - b; };
+const optWinPct = r => changePct(n(r.dx_win_per_day), n(r.img_win_per_day));
+const optWinText = r => optWinDelta(r) === null ? null
+  : `факт Dextra в те же дни ${km(n(r.dx_win_per_day))} · Dextra − IMG ${deltaKm(optWinDelta(r))} км` +
+    (optWinPct(r) === null ? '' : ` (${signedPct(optWinPct(r))})`);
 /* цель в км: база × (1 − цель %); без настройки или без базы — нет */
 function optGoal(r){
   const t = cfg('opt_target_pct'), b = n(r.base_per_car_day);
@@ -2220,6 +2227,7 @@ function optTip(r){
     `изменение ${signedPct(optChange(r))}` + (t !== null && base !== null ? ` · цель −${int(t)}%: ${km(optGoal(r))} км` : ''),
     optFixNote(r) ? `${cap(optFixNote(r))} (до ${ruDate(settings.dextra_return_fix_date)}) — настоящий пробег выше` : null,
     `ориентир IMG: ${km(n(r.img_per_day))} км за весь день машины (дней с данными IMG ${int(n(r.img_days))})`,
+    optWinText(r) ? `IMG в окне маршрута Dextra: ${km(n(r.img_win_per_day))} км (дней ${int(n(r.img_win_days))}), ${optWinText(r)}` : null,
     r.few_cars ? 'в Dextra меньше половины машин из базы — в итог по всем не идёт' : null].filter(Boolean).join('\n');
 }
 /* ---- оформление графиков (правила dataviz): сплошная тонкая сетка, линии 2 px, точки r 4 с кольцом фона,
@@ -2269,6 +2277,8 @@ function optTipNodes(r){
     d === null ? null : row('none', `${deltaWord(c)} ${deltaKm(d)} км · ${signedPct(c)}`, 'дельта к 2025', changeCls(c)),
     optGoal(r) === null ? null : row('goal', km(optGoal(r)) + ' км', `цель −${int(t)}%` + (c !== null && c <= -t ? ' — достигнута' : '')),
     n(r.img_per_day) === null ? null : row('img', km(n(r.img_per_day)) + ' км', `IMG, весь день машины · ${signedPct(changePct(n(r.img_per_day), n(r.base_per_car_day)))} к 2025`),
+    n(r.img_win_per_day) === null ? null : row('imgw', km(n(r.img_win_per_day)) + ' км', 'IMG в окне маршрута Dextra' +
+      (optWinDelta(r) === null ? '' : ` · Dextra ${deltaKm(optWinDelta(r))} км` + (optWinPct(r) === null ? '' : ` (${signedPct(optWinPct(r))})`))),
     n(r.plan_per_day) === null ? null : row('plan', km(n(r.plan_per_day)) + ' км', 'план Dextra'),
     h('div', { class:'tn' }, `машин ${int(n(r.cars))} · дней с фактом ${int(n(r.fact_days))}`),
     optFixNote(r) ? h('div', { class:'tn' }, `${cap(optFixNote(r))} до ${ruDate(settings.dextra_return_fix_date)} — настоящий пробег выше`) : null,
@@ -2449,7 +2459,7 @@ function optMonthChart(rows){
   return wrap;
 }
 
-/* плитки: последний месяц — Dextra, тот же месяц 2025, дельта, IMG-ориентир */
+/* плитки: последний месяц — Dextra, тот же месяц 2025, дельта, IMG-ориентир за день и IMG в окне маршрута */
 function optKpis(months){
   const r = months[months.length - 1];
   if (!r) return null;
@@ -2464,7 +2474,9 @@ function optKpis(months){
     tile('Дельта к 2025', d === null ? '—' : [`${deltaWord(c)} ${deltaKm(d)}`, h('small', null, ` км · ${signedPct(c)}`)],
       t === null || c === null ? null : c <= -t ? `цель −${int(t)}% достигнута` : `до цели −${int(t)}% ещё ${int(c + t)} п. п.`,
       c === null ? null : c < 0 ? 'success' : c > 0 ? 'danger' : null),
-    tile('IMG — ориентир', [km(n(r.img_per_day)), h('small', null, ' км')], ci === null ? 'весь день машины' : `весь день машины · ${signedPct(ci)} к 2025`));
+    tile('IMG — ориентир', [km(n(r.img_per_day)), h('small', null, ' км')], ci === null ? 'весь день машины' : `весь день машины · ${signedPct(ci)} к 2025`),
+    tile('IMG в окне маршрута Dextra', n(r.img_win_per_day) === null ? '—' : [km(n(r.img_win_per_day)), h('small', null, ' км')],
+      n(r.img_win_per_day) === null ? 'нет дней с окном маршрута и данными IMG' : optWinText(r)));
 }
 const legend = (...items) => h('div', { class:'legend' }, items.map(([cls, text]) => h('span', null, h('i', { class:'lg ' + cls }), text)));
 
@@ -2474,12 +2486,15 @@ function renderOptimization(){
   const t = cfg('opt_target_pct');
   $('note-opt').textContent = 'Км на машину в рабочий день. 2026 — факт Dextra: маршруты после обкатки по вчера, км дня машины ' +
     '(дни, за которые Dextra не отдала факт, не считаются). 2025 — файл «ГСМ и амортизация» (из путевых листов) за тот же месяц: ' +
-    'км, делённые на водителей × рабочие дни. IMG — ориентир: км за весь день той же машины в те же дни. Воскресенья, субботы вне ' +
+    'км, делённые на водителей × рабочие дни. IMG — ориентир: км за весь день той же машины в те же дни. IMG в окне маршрута — ' +
+    'км IMG в окне маршрута Dextra (окно как в проверке 2), рядом факт Dextra за те же дни (дни, где IMG за день есть) и разница ' +
+    '«Dextra − IMG»: так видно, насколько Dextra сходится с IMG. Воскресенья, субботы вне ' +
     'сезона и праздники (настройка opt_days_off) не считаются. Факт Dextra до ' + ruDate(settings.dextra_return_fix_date) +
     ' — без дороги на склад. Период и город сверху на раздел не влияют; наведите на неделю или месяц — подробности.';
   $('note-optd').textContent = 'Кто именно ездил — не важно: сравниваются км машины в день. 2025 — путевой лист (км и дни из листа) ' +
     'или ведомость амортизации (дней в ней нет — км делятся на рабочие дни месяца). 2026 — машина по Dextra в тот же месяц: дни с ' +
-    'маршрутом после обкатки и фактом км, факт Dextra в день; IMG — ориентир, км за весь день машины.';
+    'маршрутом после обкатки и фактом км, факт Dextra в день; IMG — ориентир, км за весь день машины; IMG в окне маршрута — ' +
+    'км IMG в окне маршрута Dextra (как в проверке 2) и «Dextra − IMG» в % по тем же дням.';
   const weeks = optSeries('week', optCity, today);
   const months = optSeries('month', optCity, today);
   if (optError || !months.length){
@@ -2515,6 +2530,12 @@ function renderOptimization(){
       { t:t === null ? 'Цель' : `Цель −${int(t)}%, км`, v:r => optGoal(r), num:true, f:km },
       { t:'План Dextra в день', v:r => n(r.plan_per_day), num:true, f:km },
       { t:'IMG в день (ориентир)', tip:'км IMG за весь день той же машины в те же дни', v:r => n(r.img_per_day), num:true, f:km },
+      { t:'IMG в окне маршрута', tip:'км IMG от старта до финиша маршрута Dextra, в день машины', v:r => n(r.img_win_per_day), num:true, f:km,
+        title:r => optWinText(r) ? `${optWinText(r)}; дней ${int(n(r.img_win_days))}` : null },
+      { t:'Dextra в те же дни', tip:'факт Dextra в день машины по тем же дням, что и IMG в окне', v:r => n(r.dx_win_per_day), num:true, f:km,
+        title:r => n(r.img_win_days) === null ? null : `дней ${int(n(r.img_win_days))}` },
+      { t:'Dextra к IMG в окне, %', tip:'факт Dextra против IMG в окне маршрута по тем же дням; плюс — Dextra насчитала больше',
+        v:optWinPct, num:true, f:signedPct },
       { t:'Машин 2026', v:r => n(r.cars), num:true, f:int },
       { t:'Дней с фактом', v:r => n(r.fact_days), num:true, f:int, title:r => `машино-дней с маршрутом ${int(n(r.days))}` },
       { t:'Км Dextra 2026', v:r => n(r.dx_km), num:true, f:int },
@@ -2544,9 +2565,11 @@ function renderOptDrivers(today){
   const rows = [
     ...optDocs.filter(r => inCity(r) && next(r.month) <= nowMonth).map(r => ({ mon:next(r.month), city:r.city, year:2025,
       driver:r.driver_name, plate:r.plate_key, source:r.source, days:n(r.days), km:n(r.km), perDay:n(r.per_day), plan:null, img:null,
+      imgWin:null, winPct:null, winTip:null,
       daysTip:r.work_days ? null : 'в ведомости дней нет — рабочие дни месяца' })),
     ...optCars.filter(inCity).map(r => ({ mon:r.month.slice(0, 7), city:r.city, year:2026, driver:r.drivers, plate:r.plate_key,
       source:'Dextra', days:n(r.fact_days), km:n(r.dx_km), perDay:n(r.fact_per_day), plan:n(r.plan_per_day), img:n(r.img_per_day),
+      imgWin:n(r.img_win_per_day), winPct:optWinPct(r), winTip:optWinText(r) && `${optWinText(r)}; дней ${int(n(r.img_win_days))}`,
       daysTip:`дней с маршрутом ${int(n(r.days))}, с фактом ${int(n(r.fact_days))}; IMG — дней ${int(n(r.img_days))}` })),
   ].sort((a, b) => byText(b.mon, a.mon) || byText(cityName(a.city), cityName(b.city)) || a.year - b.year || (b.perDay ?? -1) - (a.perDay ?? -1));
   const cols = [
@@ -2561,6 +2584,9 @@ function renderOptDrivers(today){
     { t:'Км в день', tip:'2025 — путевой лист, 2026 — факт Dextra', v:r => r.perDay, num:true, f:km },
     { t:'План Dextra в день', v:r => r.plan, num:true, f:km },
     { t:'IMG в день (ориентир)', v:r => r.img, num:true, f:km },
+    { t:'IMG в окне маршрута', v:r => r.imgWin, num:true, f:km, title:r => r.winTip },
+    { t:'Dextra к IMG в окне, %', tip:'факт Dextra против IMG в окне маршрута по тем же дням; плюс — Dextra насчитала больше',
+      v:r => r.winPct, num:true, f:signedPct },
   ];
   put('tbl-optd', table(cols, rows, { empty:'Машин нет',
     emptyHint:optCity ? 'По этому городу нет ни путевых листов 2025, ни маршрутов Dextra после обкатки.' : 'Нет ни путевых листов, ни маршрутов.' }));

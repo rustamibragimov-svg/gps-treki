@@ -2404,12 +2404,13 @@ document.addEventListener('pointerdown', e => {
   for (const t of document.querySelectorAll('.opt-tip:not([hidden])')) if (!t.parentElement.contains(e.target)) t.hidden = true;
 });
 /* подсказка и прицел: полоса периода — цель наведения (больше самой отметки), то же — с клавиатуры */
-function optBindTips(wrap, rows, xhair){
+/* nodes — содержимое подсказки (по умолчанию км; у графика ГСМ — суммы) */
+function optBindTips(wrap, rows, xhair, nodes = optTipNodes){
   const tip = h('div', { class:'opt-tip', role:'tooltip', hidden:true });
   wrap.append(tip);
   /* px, py — координаты окна: подсказка position:fixed, прокрутка графика её не обрезает */
   const place = (r, px, py) => {
-    tip.replaceChildren(...optTipNodes(r).filter(Boolean));
+    tip.replaceChildren(...nodes(r).filter(Boolean));
     tip.hidden = false;
     const w = tip.offsetWidth, hh = tip.offsetHeight, W = document.documentElement.clientWidth, Hh = window.innerHeight;
     let x = px + 14;
@@ -2573,6 +2574,73 @@ function optMonthChart(rows){
   return wrap;
 }
 
+/* подсказка графика ГСМ: суммы месяца, на машину в день и разбивка «топливо + амортизация» */
+function gsmTipNodes(r){
+  const t = cfg('opt_target_pct'), d = gsmDelta(r), c = gsmPct(r), base = gsmBase(r);
+  const row = (key, value, label, cls) => h('div', { class:'tr' + (cls ? ' ' + cls : '') },
+    h('i', { class:'k ' + key }), h('b', null, value), h('span', null, label));
+  const day = v => v === null ? '' : ` · ${int(v)} сум на машину в день`;
+  return [
+    h('div', { class:'th' }, `${optLabel(r)} · ГСМ` + (r.open ? ' · ещё идёт' : '')),
+    row('dx', mln(gsmDx(r)) + ' млн', 'по факту Dextra за тот же объём' + day(gsmDxDay(r))),
+    row('b25', mln(base) + ' млн', `путевые листы, ${r.base_month ? monthName(r.base_month) : 'год назад'}` + day(gsmBaseDay(r))),
+    d === null ? null : row('none', `${deltaWord(c)} ${signedMln(d)} млн · ${signedPct(c)}`, 'разница', changeCls(c)),
+    base === null || t === null ? null : row('goal', mln(base * (1 - t / 100)) + ' млн', `цель −${int(t)}%`),
+    gsmPaid(r) === null ? null : row('none', mln(gsmPaid(r)) + ' млн', `заплатили в ${yearOf(r.base_month)} по тогдашним ценам`),
+    gsmSplit(r, 'dx_eq_fuel', 'dx_eq_amort') ? h('div', { class:'tn' }, 'Dextra: ' + gsmSplit(r, 'dx_eq_fuel', 'dx_eq_amort')) : null,
+    gsmSplit(r, 'base_fuel', 'base_amort') ? h('div', { class:'tn' }, 'путевые листы: ' + gsmSplit(r, 'base_fuel', 'base_amort')) : null,
+    h('div', { class:'tn' }, gsmRateText(r)),
+    optSkipText(r) ? h('div', { class:'tn' }, optSkipText(r)) : null,
+  ];
+}
+/* шкала в млн: 4 деления по «круглому» шагу; у км-шкалы optScale минимум 20 — для сумм одного города слишком крупно */
+function gsmScale(vals){
+  const top = Math.max(0, ...vals.filter(v => v !== null)) * 1.12 / 4;
+  const step = [1, 2, 2.5, 5, 10, 20, 25, 50, 100].find(s => s >= top) ?? Math.ceil(top / 100) * 100;
+  return step * 4;
+}
+
+/* ГСМ по месяцам, млн сум: путевые листы год назад против факта Dextra за тот же объём (обе — по ставке этого года);
+   над парой — разница, пунктир — цель opt_target_pct от суммы путевых листов. Месяцы без базы не рисуются
+   (без базы нет и «тот же объём» у Dextra). */
+function gsmMonthChart(rows){
+  const W = 900, L = 44, R = 16, T = 40, ph = 180, B = 44, H = T + ph + B;
+  const pw = W - L - R, band = Math.min(pw / rows.length, 240), x0 = L + (pw - band * rows.length) / 2;
+  const toM = v => v === null ? null : v / 1e6;
+  const yMax = gsmScale(rows.flatMap(r => [toM(gsmBase(r)), toM(gsmDx(r))]));
+  const y = v => T + ph - Math.min(v, yMax) / yMax * ph;
+  const t = cfg('opt_target_pct');
+  const g = [];
+  optGrid(g, y, yMax, L, W - R);
+  const bw = 28;
+  rows.forEach((r, i) => {
+    const cx = x0 + band * i + band / 2;
+    const base = toM(gsmBase(r)), now = toM(gsmDx(r)), goal = base === null || t === null ? null : base * (1 - t / 100);
+    const xb = cx - bw - 2, xn = cx + 2;
+    if (base !== null && base > 0) g.push(sv('path', { class:'col25', d:colPath(xb, bw, y(base), y(0)) }),
+      sv('text', { class:'val', x:xb + bw / 2, y:y(base) - 6, 'text-anchor':'middle' }, km(base)));
+    if (now !== null && now > 0) g.push(sv('path', { class:'col26' + (r.open ? ' open' : ''), d:colPath(xn, bw, y(now), y(0)) }),
+      sv('text', { class:'val', x:xn + bw / 2, y:y(now) - 6, 'text-anchor':'middle' }, km(now)));
+    if (goal !== null) g.push(sv('line', { class:'goal', x1:xb - 10, x2:xn + bw + 10, y1:y(goal), y2:y(goal) }));
+    const d = gsmDelta(r), c = gsmPct(r);
+    if (d !== null){
+      const top = Math.min(y(base ?? 0), y(now ?? 0));
+      g.push(sv('text', { class:'delta ' + (changeCls(c) || ''), x:cx, y:Math.max(14, top - 24), 'text-anchor':'middle' },
+        band < 150 ? `${deltaWord(c)} ${signedPct(c)}` : `${deltaWord(c)} ${signedMln(d)} млн · ${signedPct(c)}`));
+    }
+    g.push(sv('text', { class:'tick sm', x:xb + bw / 2, y:y(0) + 14, 'text-anchor':'middle' }, yearOf(r.base_month)),
+      sv('text', { class:'tick sm', x:xn + bw / 2, y:y(0) + 14, 'text-anchor':'middle' }, yearOf(r.period_start)),
+      sv('text', { class:'month', x:cx, y:H - 8, 'text-anchor':'middle' }, cap(MONTHS_RU[Number(r.period_start.slice(5, 7)) - 1]) + (r.open ? ' (идёт)' : '')));
+    g.push(sv('rect', { class:'hit', x:x0 + band * i, y:0, width:band, height:T + ph, tabindex:'0', role:'img', 'data-i':String(i),
+      'data-cx':cx.toFixed(1), 'aria-label':`${optLabel(r)}. ${gsmTip(r) || ''}` }));
+  });
+  const svg = sv('svg', { viewBox:`0 0 ${W} ${H}`, role:'group',
+    'aria-label':'ГСМ по месяцам, млн сум: путевые листы год назад и факт Dextra за тот же объём, с разницей' }, g);
+  const wrap = h('div', { class:'plot' }, svg);
+  optBindTips(wrap, rows, null, gsmTipNodes);
+  return wrap;
+}
+
 /* плитки: последний месяц — Dextra, тот же месяц 2025, дельта, IMG-ориентир за день и IMG в окне маршрута */
 function optKpis(months){
   const r = months[months.length - 1];
@@ -2607,7 +2675,7 @@ function gsmKpis(months){
   const by = yearOf(r.base_month), ny = yearOf(r.period_start);
   return h('div', null,
     h('h3', { class:'gsm-head' }, 'ГСМ: топливо + амортизация'),
-    h('p', { class:'note' }, `Обе стороны считаются по одной ставке (${gsmRateText(r)}), поэтому разница идёт только от км. ` +
+    h('p', { class:'note' }, `Обе стороны считаются по одной ставке — ${gsmRateText(r)}. Поэтому разница идёт только от км. ` +
       `«По факту Dextra» — сколько заплатили бы за тот же объём работы, что в ${by} (водителей × рабочих дней), если бы платили ` +
       'по факту Dextra на машину в день. Факт Dextra — только маршрут, а путевой лист — весь день машины, поэтому экономия по ' +
       'Dextra завышена.' + (r.open ? ' Месяц ещё идёт: сумма по Dextra — по дням, что уже прошли, в пересчёте на весь месяц.' : '')),
@@ -2619,7 +2687,20 @@ function gsmKpis(months){
         d === null ? '—' : [`${deltaWord(c)} ${signedMln(d)}`, h('small', null, ` млн сум · ${signedPct(c)}`)],
         d === null ? null : d < 0 ? 'платили бы меньше' : d > 0 ? 'платили бы больше' : 'столько же',
         c === null ? null : c < 0 ? 'success' : c > 0 ? 'danger' : null),
-      tile(`Заплатили в ${by || 'прошлом году'}`, mlnVal(gsmPaid(r)), gsmPaid(r) === null ? null : `по ценам ${by}, файл ГСМ`)));
+      tile(`Заплатили в ${by || 'прошлом году'}`, mlnVal(gsmPaid(r)), gsmPaid(r) === null ? null : `по ценам ${by}, файл ГСМ`)),
+    gsmChartBlock(months));
+}
+function gsmChartBlock(months){
+  const rows = months.filter(r => gsmBase(r) !== null);
+  if (!rows.length) return null;
+  const t = cfg('opt_target_pct');
+  return h('div', { class:'chart opt' },
+    h('h3', null, 'ГСМ по месяцам, млн сум'),
+    h('p', null, 'Над каждой парой — разница: на сколько меньше (▼) или больше (▲) заплатили бы по факту Dextra, чем по путевым ' +
+      'листам того же месяца год назад. Наведите на месяц — подробности.'),
+    legend(['b25', 'путевые листы год назад'], ['b26', 'по факту Dextra за тот же объём (бледный — месяц идёт, в пересчёте на весь месяц)'],
+      ['goal', t === null ? 'цель не задана (opt_target_pct)' : `цель −${int(t)}%`]),
+    h('div', { class:'scroll' }, gsmMonthChart(rows)));
 }
 const legend = (...items) => h('div', { class:'legend' }, items.map(([cls, text]) => h('span', null, h('i', { class:'lg ' + cls }), text)));
 

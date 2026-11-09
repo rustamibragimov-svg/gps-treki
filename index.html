@@ -2307,16 +2307,16 @@ function optGoal(r){
   return t === null || b === null ? null : b * (1 - t / 100);
 }
 
-/* ГСМ (сум): топливо + амортизация, обе стороны по ставке 2026 (топливо города — норма × цена куба из gsm_region_base,
-   иначе settings gsm_fuel_rate; амортизация — gsm_amort_rate) — разница
-   только от км. base_* — км путевых листов 2025 × ставка; dx_eq_* — факт Dextra на машину в день × машино-дни 2025 ×
-   ставка («сколько заплатили бы за тот же объём по Dextra», только у месяцев); dx_* — км Dextra периода как есть;
-   base_paid_* — сколько реально заплатили в 2025 (по ценам 2025). Расчёт — в v_opt_period. */
+/* ГСМ (сум): топливо + амортизация. 2025 — факт: сколько заплатили по путевым листам (base_paid_*, файл ГСМ, цены 2025;
+   решение пользователя 10.11.2026 — пересчёт км 2025 по ставке 2026 путал, base_* на странице больше не показываются).
+   2026 — dx_eq_*: факт Dextra на машину в день × машино-дни 2025 × ставка 2026 (топливо города — норма × цена куба из
+   gsm_region_base, иначе gsm_fuel_rate; амортизация — gsm_amort_rate) — «сколько заплатили бы за тот же объём по Dextra»,
+   только у месяцев; dx_* — км Dextra периода как есть. Разница поэтому включает и рост цены газа. Расчёт — в v_opt_period. */
 /* топливо + амортизация; без одной из частей суммы нет — неполная сумма выглядела бы как полная */
 const pairSum = (r, a, b) => { const x = n(r[a]), y = n(r[b]); return x === null || y === null ? null : x + y; };
-const gsmBase = r => pairSum(r, 'base_fuel', 'base_amort');
-const gsmDx = r => pairSum(r, 'dx_eq_fuel', 'dx_eq_amort');
 const gsmPaid = r => pairSum(r, 'base_paid_fuel', 'base_paid_amort');
+const gsmBase = gsmPaid;   // база 2025 — сколько фактически заплатили
+const gsmDx = r => pairSum(r, 'dx_eq_fuel', 'dx_eq_amort');
 const gsmDelta = r => { const a = gsmDx(r), b = gsmBase(r); return a === null || b === null ? null : a - b; };
 const gsmPct = r => changePct(gsmDx(r), gsmBase(r));
 /* сум на машину в рабочий день: 2025 — на машино-дни базы, Dextra — на дни с фактом */
@@ -2348,11 +2348,11 @@ const yearOf = iso => iso ? iso.slice(0, 4) : '';
 function gsmTip(r){
   const bd = gsmBaseDay(r), dd = gsmDxDay(r), by = yearOf(r.base_month);
   if (bd === null && dd === null) return null;
-  const perDay = `ГСМ на машину в день: путевые листы ${by} — ${bd === null ? 'нет базы' : int(bd) + ' сум'}, ` +
+  const perDay = `ГСМ на машину в день: заплатили в ${by} — ${bd === null ? 'нет базы' : int(bd) + ' сум'}, ` +
     `Dextra — ${dd === null ? 'нет факта' : int(dd) + ' сум'}`;
   /* у недели база — месячная, поэтому суммы за месяц показываются только у месяцев */
   if (r.period === 'week' || gsmBase(r) === null || gsmDx(r) === null) return perDay;
-  return `${perDay}; за месяц по путевым листам ${int(gsmBase(r))} сум, по Dextra за тот же объём ${int(gsmDx(r))} сум, ` +
+  return `${perDay}; за месяц заплатили по путевым листам ${int(gsmBase(r))} сум, по Dextra за тот же объём ${int(gsmDx(r))} сум, ` +
     `разница ${signedSum(gsmDelta(r))} сум (${signedPct(gsmPct(r))})`;
 }
 
@@ -2376,10 +2376,12 @@ function mergeOpt(rows){
       base_per_car_day:per('base_km_sum', 'base_car_days'), few_cars:false,
       img_win_days:s('img_win_days'), img_win_per_day:per('img_win_km_sum', 'img_win_days'),
       dx_win_per_day:per('dx_win_km_sum', 'img_win_days'), base_car_days:s('base_car_days'),
-      ...Object.fromEntries(['base_paid_fuel', 'base_paid_amort', 'base_fuel', 'base_amort', 'dx_fuel', 'dx_amort']
-        .map(k => [k, s(k)])),
+      ...Object.fromEntries(['base_fuel', 'base_amort', 'dx_fuel', 'dx_amort'].map(k => [k, s(k)])),
+      /* заплачено 2025: у города с км базы, но без суммы — сумма неполная, её нет (иначе разница завышена) */
+      ...Object.fromEntries(['base_paid_fuel', 'base_paid_amort']
+        .map(k => [k, used.some(r => n(r.base_km_sum) !== null && n(r[k]) === null) ? null : s(k)])),
       /* как строка итога в базе: у города с базой нет dx_eq (нет дней с фактом) — сумма Dextra неполная, её нет */
-      ...Object.fromEntries([['dx_eq_fuel', 'base_fuel'], ['dx_eq_amort', 'base_amort']]
+      ...Object.fromEntries([['dx_eq_fuel', 'base_paid_fuel'], ['dx_eq_amort', 'base_paid_amort']]
         .map(([k, b]) => [k, used.some(r => n(r[b]) !== null && n(r[k]) === null) ? null : s(k)])),
       fuel_rate:null, amort_rate:null, skipped }];
   });
@@ -2658,12 +2660,11 @@ function gsmTipNodes(r){
   return [
     h('div', { class:'th' }, `${optLabel(r)} · ГСМ` + (r.open ? ' · ещё идёт' : '')),
     row('dx', mln(gsmDx(r)) + ' млн', 'по факту Dextra за тот же объём' + day(gsmDxDay(r))),
-    row('b25', mln(base) + ' млн', `путевые листы, ${r.base_month ? monthName(r.base_month) : 'год назад'}` + day(gsmBaseDay(r))),
+    row('b25', mln(base) + ' млн', `заплатили по путевым листам, ${r.base_month ? monthName(r.base_month) : 'год назад'}` + day(gsmBaseDay(r))),
     d === null ? null : row('none', `${deltaWord(c)} ${signedMln(d)} млн · ${signedPct(c)}`, 'разница', changeCls(c)),
-    base === null || t === null ? null : row('goal', mln(base * (1 - t / 100)) + ' млн', `цель −${int(t)}%`),
-    gsmPaid(r) === null ? null : row('none', mln(gsmPaid(r)) + ' млн', `заплатили в ${yearOf(r.base_month)} по тогдашним ценам`),
+    base === null || t === null ? null : row('goal', mln(base * (1 - t / 100)) + ' млн', `−${int(t)}% к заплаченному`),
     gsmSplit(r, 'dx_eq_fuel', 'dx_eq_amort') ? h('div', { class:'tn' }, 'Dextra: ' + gsmSplit(r, 'dx_eq_fuel', 'dx_eq_amort')) : null,
-    gsmSplit(r, 'base_fuel', 'base_amort') ? h('div', { class:'tn' }, 'путевые листы: ' + gsmSplit(r, 'base_fuel', 'base_amort')) : null,
+    gsmSplit(r, 'base_paid_fuel', 'base_paid_amort') ? h('div', { class:'tn' }, 'заплатили: ' + gsmSplit(r, 'base_paid_fuel', 'base_paid_amort')) : null,
     h('div', { class:'tn' }, gsmRateText(r)),
     optSkipText(r) ? h('div', { class:'tn' }, optSkipText(r)) : null,
   ];
@@ -2675,8 +2676,8 @@ function gsmScale(vals){
   return step * 4;
 }
 
-/* ГСМ по месяцам, млн сум: путевые листы год назад против факта Dextra за тот же объём (обе — по ставке этого года);
-   над парой — разница, пунктир — цель opt_target_pct от суммы путевых листов. Месяцы без базы не рисуются
+/* ГСМ по месяцам, млн сум: заплачено по путевым листам год назад (цены того года) против факта Dextra за тот же объём
+   (ставка этого года); над парой — разница, пунктир — opt_target_pct от заплаченного (денежный ориентир, не км). Месяцы без базы не рисуются
    (без базы нет и «тот же объём» у Dextra). */
 function gsmMonthChart(rows){
   const W = 900, L = 44, R = 16, T = 40, ph = 180, B = 44, H = T + ph + B;
@@ -2727,13 +2728,14 @@ function renderOptMonths(months){
       cap(MONTHS_RU[Number(r.period_start.slice(5, 7)) - 1]) + (multiYear ? ' ' + yearOf(r.period_start) : '') + (r.open ? ' (идёт)' : ''))));
 }
 
-/* плитки: выбранный месяц — Dextra, тот же месяц 2025, дельта, IMG-ориентир за день и IMG в окне маршрута */
+/* плитки: выбранный месяц — Dextra, тот же месяц 2025, дельта и сколько всего км проехали по путевым листам и по Dextra
+   (решение пользователя 10.11.2026: вместо плиток IMG — факт; IMG остался на графике и в таблице) */
 function optKpis(months){
   const r = optPick(months);
   if (!r) return null;
   const t = cfg('opt_target_pct'), d = optDelta(r), c = optChange(r);
-  const ci = changePct(n(r.img_per_day), n(r.base_per_car_day));
   const mon = cap(monthName(r.period_start)) + (r.open ? ' (идёт)' : '');
+  const baseMon = r.base_month ? cap(monthName(r.base_month)) : 'Год назад';
   const tile = (label, value, sub, cls) => h('div', { class:'kpi' }, h('span', null, label),
     h('b', { class:cls || null }, value), sub ? h('em', null, sub) : null);
   return h('div', { class:'kpis opt-kpis' },
@@ -2742,13 +2744,15 @@ function optKpis(months){
     tile('Дельта к 2025', d === null ? '—' : [`${deltaWord(c)} ${deltaKm(d)}`, h('small', null, ` км · ${signedPct(c)}`)],
       t === null || c === null ? null : c <= -t ? `цель −${int(t)}% достигнута` : `до цели −${int(t)}% ещё ${int(c + t)} п. п.`,
       c === null ? null : c < 0 ? 'success' : c > 0 ? 'danger' : null),
-    tile('IMG — ориентир', [km(n(r.img_per_day)), h('small', null, ' км')], ci === null ? 'весь день машины' : `весь день машины · ${signedPct(ci)} к 2025`),
-    tile('IMG в окне маршрута Dextra', n(r.img_win_per_day) === null ? '—' : [km(n(r.img_win_per_day)), h('small', null, ' км')],
-      n(r.img_win_per_day) === null ? 'нет дней с окном маршрута и данными IMG' : optWinText(r)));
+    tile(`${baseMon} · проехали по путевым листам`, n(r.base_km) === null ? '—' : [int(n(r.base_km)), h('small', null, ' км')],
+      n(r.base_km) === null ? 'базы за этот месяц нет' : `всего за месяц · машин ${int(n(r.base_cars))}, файл ГСМ`),
+    tile(`${mon} · проехали по Dextra`, n(r.dx_km) === null ? '—' : [int(n(r.dx_km)), h('small', null, ' км')],
+      n(r.dx_km) === null ? 'нет дней с фактом Dextra'
+        : `${r.open ? 'с начала месяца' : 'всего за месяц'} · машин ${int(n(r.cars))}, дней с фактом ${int(n(r.fact_days))}`));
 }
 
-/* плитки ГСМ за тот же выбранный месяц: сколько стоят км путевых листов 2025 и факт Dextra за тот же объём,
-   по ставке 2026; рядом — сколько реально заплатили в 2025 */
+/* плитки ГСМ за тот же выбранный месяц: сколько фактически заплатили по путевым листам год назад и сколько заплатили бы
+   по факту Dextra за тот же объём по ставке этого года */
 function gsmKpis(months){
   const r = optPick(months);
   if (!r) return null;
@@ -2761,19 +2765,19 @@ function gsmKpis(months){
   const by = yearOf(r.base_month), ny = yearOf(r.period_start);
   return h('div', null,
     h('h3', { class:'gsm-head' }, 'ГСМ: топливо + амортизация'),
-    h('p', { class:'note' }, `Обе стороны считаются по одной и той же ставке — ${gsmRateText(r)}. Поэтому разница идёт только от км. ` +
+    h('p', { class:'note' }, `${by || 'Год назад'} — факт: сколько заплатили водителям по путевым листам (файл ГСМ, по ценам ${by}). ` +
       `«По факту Dextra» — сколько заплатили бы за тот же объём работы, что в ${by} (водителей × рабочих дней), если бы платили ` +
-      'по факту Dextra на машину в день. Факт Dextra — только маршрут, а путевой лист — весь день машины, поэтому экономия по ' +
-      'Dextra завышена.' + (r.open ? ' Месяц ещё идёт: сумма по Dextra — по дням, что уже прошли, в пересчёте на весь месяц.' : '')),
+      `по факту Dextra на машину в день, по ставке ${ny} (${gsmRateText(r)}). Газ подорожал, поэтому в разнице есть и рост цены, ` +
+      'а не только меньше км. Факт Dextra — только маршрут, а путевой лист — весь день машины, поэтому экономия по Dextra завышена.' +
+      (r.open ? ' Месяц ещё идёт: сумма по Dextra — по дням, что уже прошли, в пересчёте на весь месяц.' : '')),
     h('div', { class:'kpis opt-kpis' },
-      tile(`${r.base_month ? cap(monthName(r.base_month)) : 'Год назад'} · путевые листы`, mlnVal(base),
-        base === null ? `базы ${by} за этот месяц нет` : sumDay(gsmBaseDay(r))),
+      tile(`${r.base_month ? cap(monthName(r.base_month)) : 'Год назад'} · заплатили по путевым листам`, mlnVal(base),
+        base === null ? `базы ${by} за этот месяц нет` : `${sumDay(gsmBaseDay(r))} · по ценам ${by}`),
       tile(`${mon} · по факту Dextra`, mlnVal(dx), sumDay(gsmDxDay(r)) || 'нет дней с фактом Dextra'),
       tile(`Разница за месяц${r.open ? ' (на сегодня)' : ''}`,
         d === null ? '—' : [`${deltaWord(c)} ${signedMln(d)}`, h('small', null, ` млн сум · ${signedPct(c)}`)],
         d === null ? null : d < 0 ? 'платили бы меньше' : d > 0 ? 'платили бы больше' : 'столько же',
-        c === null ? null : c < 0 ? 'success' : c > 0 ? 'danger' : null),
-      tile(`Заплатили в ${by || 'прошлом году'}`, mlnVal(gsmPaid(r)), gsmPaid(r) === null ? null : `по ценам ${by}, файл ГСМ`)),
+        c === null ? null : c < 0 ? 'success' : c > 0 ? 'danger' : null)),
     gsmChartBlock(months));
 }
 function gsmChartBlock(months){
@@ -2782,10 +2786,10 @@ function gsmChartBlock(months){
   const t = cfg('opt_target_pct');
   return h('div', { class:'chart opt' },
     h('h3', null, 'ГСМ по месяцам, млн сум'),
-    h('p', null, 'Над каждой парой — разница: на сколько меньше (▼) или больше (▲) заплатили бы по факту Dextra, чем по путевым ' +
-      'листам того же месяца год назад. Наведите на месяц — подробности.'),
-    legend(['b25', 'путевые листы год назад'], ['b26', 'по факту Dextra за тот же объём (бледный — месяц идёт, в пересчёте на весь месяц)'],
-      ['goal', t === null ? 'цель не задана (opt_target_pct)' : `цель −${int(t)}%`]),
+    h('p', null, 'Над каждой парой — разница: на сколько меньше (▼) или больше (▲) заплатили бы по факту Dextra, чем фактически ' +
+      'заплатили по путевым листам того же месяца год назад. Наведите на месяц — подробности.'),
+    legend(['b25', 'заплатили по путевым листам год назад'], ['b26', 'по факту Dextra за тот же объём (бледный — месяц идёт, в пересчёте на весь месяц)'],
+      ['goal', t === null ? 'цель не задана (opt_target_pct)' : `−${int(t)}% к заплаченному`]),
     h('div', { class:'scroll' }, gsmMonthChart(rows)));
 }
 const legend = (...items) => h('div', { class:'legend' }, items.map(([cls, text]) => h('span', null, h('i', { class:'lg ' + cls }), text)));
@@ -2801,10 +2805,10 @@ function renderOptimization(){
     'км IMG в окне маршрута Dextra (окно как в проверке 2), рядом факт Dextra за те же дни (дни, где IMG за день есть) и разница ' +
     '«Dextra − IMG»: так видно, насколько Dextra сходится с IMG. Воскресенья, субботы вне ' +
     'сезона и праздники (настройка opt_days_off) не считаются. Факт Dextra до ' + ruDate(settings.dextra_return_fix_date) +
-    ' — без дороги на склад. ГСМ — топливо и амортизация по ставке этого года (топливо — норма газа × цена куба города, таблица ' +
-    'gsm_region_base, без цены — настройка gsm_fuel_rate; амортизация — gsm_amort_rate) для обеих ' +
-    'сторон: км путевых листов год назад и факт Dextra на машину в день за тот же объём работы; факт Dextra — только маршрут, ' +
-    'путевой лист — весь день машины, поэтому экономия по Dextra завышена. Период и город сверху на раздел не влияют. Городов можно отметить несколько — км сложатся по ' +
+    ' — без дороги на склад. ГСМ — топливо и амортизация: год назад — сколько фактически заплатили по путевым листам (файл ГСМ, ' +
+    'цены того года); Dextra — факт на машину в день за тот же объём работы по ставке этого года (топливо — норма газа × цена ' +
+    'куба города, таблица gsm_region_base, без цены — настройка gsm_fuel_rate; амортизация — gsm_amort_rate), поэтому в разнице ' +
+    'есть и рост цены газа; факт Dextra — только маршрут, путевой лист — весь день машины, поэтому экономия по Dextra завышена. Период и город сверху на раздел не влияют. Городов можно отметить несколько — км сложатся по ' +
     'тому же правилу, что и «Все города». Плитки — за месяц, выбранный кнопкой «Месяц» (по умолчанию последний); графики и ' +
     'таблица — за все месяцы. Наведите на неделю или месяц — подробности.';
   $('note-optd').textContent = 'Кто именно ездил — не важно: сравниваются км машины в день. 2025 — путевой лист (км и дни из листа) ' +
@@ -2851,15 +2855,13 @@ function renderOptimization(){
       { t:'2025, км на машину в день', tip:'км файла ГСМ / (водителей × рабочих дней месяца)', v:r => n(r.base_per_car_day), num:true, f:km },
       { t:'Дельта, км', v:optDelta, num:true, f:signedKm, bad:r => (optDelta(r) ?? 0) > 0 },
       { t:'Дельта, %', v:r => optChange(r), num:true, f:signedPct, bad:r => (optChange(r) ?? 0) > 0 },
-      { t:'ГСМ по путевым листам год назад, сум', tip:'км путевых листов того же месяца год назад × ставка этого года (топливо + амортизация)',
-        v:gsmBase, num:true, f:int, title:r => gsmSplit(r, 'base_fuel', 'base_amort') },
+      { t:'Заплатили по путевым листам год назад, сум', tip:'файл ГСМ: топливо + амортизация того же месяца год назад, по тогдашним ценам',
+        v:gsmBase, num:true, f:int, title:r => gsmSplit(r, 'base_paid_fuel', 'base_paid_amort') },
       { t:'ГСМ по Dextra за тот же объём, сум', tip:'факт Dextra на машину в день × водителей × рабочих дней того же месяца год назад × ставка',
         v:gsmDx, num:true, f:int, title:r => [gsmSplit(r, 'dx_eq_fuel', 'dx_eq_amort'),
           pairSum(r, 'dx_fuel', 'dx_amort') === null ? null : `по км Dextra за месяц как есть: ${int(pairSum(r, 'dx_fuel', 'dx_amort'))} сум`].filter(Boolean).join('\n') || null },
-      { t:'Разница ГСМ, сум', tip:'по Dextra минус по путевым листам; минус — платили бы меньше', v:gsmDelta, num:true, f:signedSum,
+      { t:'Разница ГСМ, сум', tip:'по Dextra минус заплачено по путевым листам; минус — платили бы меньше', v:gsmDelta, num:true, f:signedSum,
         bad:r => (gsmDelta(r) ?? 0) > 0, title:r => gsmPct(r) === null ? null : signedPct(gsmPct(r)) },
-      { t:'Заплатили год назад, сум', tip:'файл ГСМ: топливо + амортизация того же месяца год назад, по тогдашним ценам', v:gsmPaid, num:true, f:int,
-        title:r => gsmSplit(r, 'base_paid_fuel', 'base_paid_amort') },
       { t:t === null ? 'Цель' : `Цель −${int(t)}%, км`, v:r => optGoal(r), num:true, f:km },
       { t:'План Dextra в день', v:r => n(r.plan_per_day), num:true, f:km },
       { t:'IMG в день (ориентир)', tip:'км IMG за весь день той же машины в те же дни', v:r => n(r.img_per_day), num:true, f:km },
@@ -2957,12 +2959,13 @@ function saasPresetsCalc(){
   /* цель — первой: при одинаковом проценте дубль убирается, а пометка «по умолчанию» остаётся */
   const t = cfg('opt_target_pct');
   if (t !== null && t > 0) out.push({ v:t, target:true, label:`цель −${int(t)}%`, tip:'ориентир оптимизации (настройка opt_target_pct)' });
-  const r = [...optSeries('month', new Set(), localDate(new Date()))].reverse().find(x => !x.open && gsmPct(x) !== null);
+  /* оптимизация км — по км на машину в день (optChange), а не по деньгам: в деньгах 2025 — по ценам 2025 */
+  const r = [...optSeries('month', new Set(), localDate(new Date()))].reverse().find(x => !x.open && optChange(x) !== null);
   if (r){
     const mon = MONTHS_RU[Number(r.period_start.slice(5, 7)) - 1];
     const im = changePct(n(r.img_per_day), n(r.base_per_car_day));
-    if (gsmPct(r) < 0) out.push({ v:-gsmPct(r), label:`Dextra ${mon} −${-gsmPct(r)}%`,
-      tip:'факт в городах Dextra: ГСМ по факту Dextra к путевым листам того же месяца 2025; факт Dextra — только маршрут' });
+    if (optChange(r) < 0) out.push({ v:-optChange(r), label:`Dextra ${mon} −${-optChange(r)}%`,
+      tip:'факт в городах Dextra: км на машину в день по Dextra к путевым листам того же месяца 2025; факт Dextra — только маршрут' });
     if (im !== null && im < 0) out.push({ v:-im, label:`IMG ${mon} −${-im}%`, tip:'км IMG за весь день машины к тому же месяцу 2025 — осторожная оценка' });
   }
   return out.filter((p, i) => out.findIndex(q => q.v === p.v) === i).sort((a, b) => a.v - b.v);

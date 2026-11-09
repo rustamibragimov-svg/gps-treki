@@ -2329,12 +2329,17 @@ const signedSum = v => signWith(v, x => nf0.format(x));
 const mln = v => v === null || v === undefined || !isFinite(v) ? '—' : nf1.format(v / 1e6);
 const signedMln = v => signWith(v, mln);
 const gsmSplit = (r, f, a) => n(r[f]) === null || n(r[a]) === null ? null : `топливо ${int(n(r[f]))} + амортизация ${int(n(r[a]))} сум`;
-/* ставка строки (у города может быть своя gsm_fuel_rate:<ГОРОД>), у итога и суммы городов — общая из настроек */
+/* ставка строки (у города может быть своя gsm_fuel_rate:<ГОРОД>); у итога и суммы городов ставки нет — каждый город
+   посчитан по своей, поэтому показываем разброс: общая ставка и свои ставки городов из настроек */
 function gsmRateText(r){
-  const fuel = n(r && r.fuel_rate) ?? cfg('gsm_fuel_rate'), amort = n(r && r.amort_rate) ?? cfg('gsm_amort_rate');
-  if (fuel === null || amort === null) return 'ставка ГСМ не задана (gsm_fuel_rate, gsm_amort_rate)';
-  return `ставка ${r && r.period_start ? r.period_start.slice(0, 4) : ''}: топливо ${km(fuel)} + амортизация ${int(amort)} сум за км` +
-    (r && n(r.fuel_rate) === null && r.city === null ? ' (у города может быть своя ставка топлива)' : '');
+  const own = n(r && r.fuel_rate), amort = n(r && r.amort_rate) ?? cfg('gsm_amort_rate'), base = cfg('gsm_fuel_rate');
+  if ((own ?? base) === null || amort === null) return 'ставка ГСМ не задана (gsm_fuel_rate, gsm_amort_rate)';
+  const year = r && r.period_start ? r.period_start.slice(0, 4) : '';
+  if (own !== null) return `ставка ${year}: топливо ${km(own)} + амортизация ${int(amort)} сум за км`;
+  const rates = [base, ...Object.keys(settings).filter(k => k.startsWith('gsm_fuel_rate:')).map(cfg)].filter(v => v !== null);
+  const lo = Math.min(...rates), hi = Math.max(...rates);
+  return `ставка ${year}: топливо — своя у каждого города (${lo === hi ? km(lo) : km(lo) + '–' + km(hi)} сум за км) + ` +
+    `амортизация ${int(amort)} сум за км`;
 }
 const yearOf = iso => iso ? iso.slice(0, 4) : '';
 function gsmTip(r){
@@ -2742,7 +2747,7 @@ function gsmKpis(months){
   const by = yearOf(r.base_month), ny = yearOf(r.period_start);
   return h('div', null,
     h('h3', { class:'gsm-head' }, 'ГСМ: топливо + амортизация'),
-    h('p', { class:'note' }, `Обе стороны считаются по одной ставке — ${gsmRateText(r)}. Поэтому разница идёт только от км. ` +
+    h('p', { class:'note' }, `Обе стороны считаются по одной и той же ставке — ${gsmRateText(r)}. Поэтому разница идёт только от км. ` +
       `«По факту Dextra» — сколько заплатили бы за тот же объём работы, что в ${by} (водителей × рабочих дней), если бы платили ` +
       'по факту Dextra на машину в день. Факт Dextra — только маршрут, а путевой лист — весь день машины, поэтому экономия по ' +
       'Dextra завышена.' + (r.open ? ' Месяц ещё идёт: сумма по Dextra — по дням, что уже прошли, в пересчёте на весь месяц.' : '')),
@@ -2782,7 +2787,7 @@ function renderOptimization(){
     'км IMG в окне маршрута Dextra (окно как в проверке 2), рядом факт Dextra за те же дни (дни, где IMG за день есть) и разница ' +
     '«Dextra − IMG»: так видно, насколько Dextra сходится с IMG. Воскресенья, субботы вне ' +
     'сезона и праздники (настройка opt_days_off) не считаются. Факт Dextra до ' + ruDate(settings.dextra_return_fix_date) +
-    ' — без дороги на склад. ГСМ — топливо и амортизация по ставке этого года (настройки gsm_fuel_rate, gsm_amort_rate) для обеих ' +
+    ' — без дороги на склад. ГСМ — топливо и амортизация по ставке этого года (настройки gsm_fuel_rate, своя ставка города — gsm_fuel_rate:<ГОРОД>, gsm_amort_rate) для обеих ' +
     'сторон: км путевых листов год назад и факт Dextra на машину в день за тот же объём работы; факт Dextra — только маршрут, ' +
     'путевой лист — весь день машины, поэтому экономия по Dextra завышена. Период и город сверху на раздел не влияют. Городов можно отметить несколько — км сложатся по ' +
     'тому же правилу, что и «Все города». Наведите на неделю или месяц — подробности.';

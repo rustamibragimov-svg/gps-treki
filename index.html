@@ -2308,7 +2308,8 @@ function optGoal(r){
   return t === null || b === null ? null : b * (1 - t / 100);
 }
 
-/* ГСМ (сум): топливо + амортизация, обе стороны по ставке 2026 (settings gsm_fuel_rate, gsm_amort_rate) — разница
+/* ГСМ (сум): топливо + амортизация, обе стороны по ставке 2026 (топливо города — норма × цена куба из gsm_region_base,
+   иначе settings gsm_fuel_rate; амортизация — gsm_amort_rate) — разница
    только от км. base_* — км путевых листов 2025 × ставка; dx_eq_* — факт Dextra на машину в день × машино-дни 2025 ×
    ставка («сколько заплатили бы за тот же объём по Dextra», только у месяцев); dx_* — км Dextra периода как есть;
    base_paid_* — сколько реально заплатили в 2025 (по ценам 2025). Расчёт — в v_opt_period. */
@@ -2329,14 +2330,17 @@ const signedSum = v => signWith(v, x => nf0.format(x));
 const mln = v => v === null || v === undefined || !isFinite(v) ? '—' : nf1.format(v / 1e6);
 const signedMln = v => signWith(v, mln);
 const gsmSplit = (r, f, a) => n(r[f]) === null || n(r[a]) === null ? null : `топливо ${int(n(r[f]))} + амортизация ${int(n(r[a]))} сум`;
-/* ставка строки (у города может быть своя gsm_fuel_rate:<ГОРОД>); у итога и суммы городов ставки нет — каждый город
-   посчитан по своей, поэтому показываем разброс: общая ставка и свои ставки городов из настроек */
+/* ставка строки: у города — норма газа × цена куба (gsm_region_base), без цены — общая gsm_fuel_rate; у итога и суммы
+   городов ставки нет — каждый город посчитан по своей, поэтому показываем разброс ставок городов этого периода */
 function gsmRateText(r){
   const own = n(r && r.fuel_rate), amort = n(r && r.amort_rate) ?? cfg('gsm_amort_rate'), base = cfg('gsm_fuel_rate');
   if ((own ?? base) === null || amort === null) return 'ставка ГСМ не задана (gsm_fuel_rate, gsm_amort_rate)';
   const year = r && r.period_start ? r.period_start.slice(0, 4) : '';
-  if (own !== null) return `ставка ${year}: топливо ${km(own)} + амортизация ${int(amort)} сум за км`;
-  const rates = [base, ...Object.keys(settings).filter(k => k.startsWith('gsm_fuel_rate:')).map(cfg)].filter(v => v !== null);
+  if (own !== null || (r && r.city)) return `ставка ${year}: топливо ${km(own ?? base)} + амортизация ${int(amort)} сум за км`;
+  /* города, что вошли в эту строку: тот же период, не отдельные, не few_cars; у суммы нескольких — только отмеченные */
+  const rates = optRows.filter(x => x.city && r && x.period === r.period && x.period_start === r.period_start && !x.separate &&
+    !x.few_cars && (!optCities.size || optCities.has(x.city)) && n(x.fuel_rate) !== null).map(x => n(x.fuel_rate));
+  if (!rates.length) rates.push(base);
   const lo = Math.min(...rates), hi = Math.max(...rates);
   return `ставка ${year}: топливо — своя у каждого города (${lo === hi ? km(lo) : km(lo) + '–' + km(hi)} сум за км) + ` +
     `амортизация ${int(amort)} сум за км`;
@@ -2787,7 +2791,8 @@ function renderOptimization(){
     'км IMG в окне маршрута Dextra (окно как в проверке 2), рядом факт Dextra за те же дни (дни, где IMG за день есть) и разница ' +
     '«Dextra − IMG»: так видно, насколько Dextra сходится с IMG. Воскресенья, субботы вне ' +
     'сезона и праздники (настройка opt_days_off) не считаются. Факт Dextra до ' + ruDate(settings.dextra_return_fix_date) +
-    ' — без дороги на склад. ГСМ — топливо и амортизация по ставке этого года (настройки gsm_fuel_rate, своя ставка города — gsm_fuel_rate:<ГОРОД>, gsm_amort_rate) для обеих ' +
+    ' — без дороги на склад. ГСМ — топливо и амортизация по ставке этого года (топливо — норма газа × цена куба города, таблица ' +
+    'gsm_region_base, без цены — настройка gsm_fuel_rate; амортизация — gsm_amort_rate) для обеих ' +
     'сторон: км путевых листов год назад и факт Dextra на машину в день за тот же объём работы; факт Dextra — только маршрут, ' +
     'путевой лист — весь день машины, поэтому экономия по Dextra завышена. Период и город сверху на раздел не влияют. Городов можно отметить несколько — км сложатся по ' +
     'тому же правилу, что и «Все города». Наведите на неделю или месяц — подробности.';
@@ -2955,7 +2960,9 @@ function saasDefaults(){
 /* отдельный город мог пропасть из separate_cities после перезагрузки — тогда «города Dextra» */
 function saasState(){
   const s = { ...saasDefaults(), ...(saasUi || {}) };
-  if (s.basis.startsWith('sep:') && !saasRegions().some(r => r.separate && r.city === s.basis.slice(4))) s.basis = 'dextra';
+  const sepOk = saasRegions().filter(saasSepUsable);
+  if (s.basis.startsWith('sep:') && !sepOk.some(r => r.city === s.basis.slice(4))) s.basis = 'dextra';
+  if (!sepOk.length) s.withSep = false;
   return s;
 }
 
@@ -2963,8 +2970,11 @@ function saasState(){
 function saasRegions(){
   const sep = separateCities();
   return gsmRegions.map(r => ({ region:r.region, city:r.city, note:r.note, cars:n(r.cars), km:n(r.km_car_month), fuel:n(r.fuel_rate),
+    gas:r.gas_kind || null, price:n(r.gas_price), norm:n(r.gas_norm),
     separate:!!r.city && sep.has(r.city), dextra:!!r.city && !sep.has(r.city) }));
 }
+/* отдельный город, который можно посчитать: есть км, машины и цена газа */
+const saasSepUsable = r => r.separate && r.fuel !== null && r.km !== null && r.cars > 0;
 const saasCarGsm = (r, s) => r.km === null || r.fuel === null || s.amort === null ? null : r.km * (r.fuel + s.amort);
 /* ГСМ одной машины подписки: средний по машинам городов Dextra, всех регионов без отдельных или одного отдельного города */
 function saasBasisRows(s, regs){
@@ -2984,7 +2994,8 @@ function renderSaas(force){
   const s = saasState();
   for (const [k, [id]] of Object.entries(SAAS_FIELDS)) if (force || document.activeElement !== $(id)) $(id).value = s[k] ?? '';
   $('note-saas').textContent = 'Модель считает только ГСМ — топливо и амортизацию, которые платят водителю за км. ГСМ машины в ' +
-    'месяц — км на машину × (ставка топлива региона + амортизация) по файлу «ГСМ и амортизация». Подписка — тариф × (1 + НДС) × курс ' +
+    'месяц — км на машину × (топливо за км + амортизация): км — из файла «ГСМ и амортизация», топливо за км — норма газа ' +
+    '(м³ на 100 км) × цена куба региона (метан или пропан). Подписка — тариф × (1 + НДС) × курс ' +
     '(настройки saas_*). Экономия — ГСМ × снижение км × доля, которая доходит до выплат. Факт Dextra — только маршрут, а путевой лист — ' +
     'весь день машины, поэтому снижение по Dextra завышено; IMG за весь день — нижняя оценка. Пока ГСМ платят по путевым листам, ' +
     'экономия остаётся на бумаге — для этого поле «Доходит до выплат». Поля меняют только расчёт на экране, в базу ничего не пишется.';
@@ -2992,7 +3003,8 @@ function renderSaas(force){
   const pre = saasPresets();
   $('saas-presets').replaceChildren(...pre.map(p => h('button', { class:'pill', type:'button', 'data-v':String(p.v), title:p.tip,
     'aria-pressed':String(p.v === s.red) }, p.label)));
-  const sepCodes = [...new Set(regs.filter(r => r.separate).map(r => r.city))];
+  /* отдельный город без цены газа посчитать нельзя — кнопок для него нет (строка в таблице остаётся с «—») */
+  const sepCodes = [...new Set(regs.filter(saasSepUsable).map(r => r.city))];
   const basisOpts = [['dextra', 'городах Dextra'], ['all', 'среднем по регионам'], ...sepCodes.map(c => ['sep:' + c, cityName(c)])];
   $('saas-basis').replaceChildren(...basisOpts.map(([v, t]) => h('button', { class:'pill', type:'button', 'data-v':v,
     'aria-pressed':String(v === s.basis) }, t)));
@@ -3013,7 +3025,7 @@ function renderSaasOut(){
   const fail = gsmRegError ? ['ГСМ регионов не загрузился', gsmRegError + ' Нажмите «Показать» на Своде, чтобы повторить.']
     : !regs.length ? ['ГСМ регионов нет', 'Таблица gsm_region_base пуста — заполните её из файла ГСМ.']
     : missing.length ? ['Не хватает чисел', 'Заполните поля выше или добавьте в настройки: ' + missing.join(', ') + '.']
-    : g === null ? ['Нет машин для расчёта', 'У выбранных регионов нет машин или ставки топлива.'] : null;
+    : g === null ? ['Нет машин для расчёта', 'У выбранных регионов нет машин или цены газа (таблица gsm_region_base).'] : null;
   if (fail){
     put('saas-now', emptyBox(...fail));
     ['saas-chart', 'saas-matrix'].forEach(id => $(id).replaceChildren());
@@ -3135,7 +3147,11 @@ function saasRegionTable(s, regs, sc){
       title:r => [r.separate ? 'смотрится отдельно (separate_cities)' : null, r.note].filter(Boolean).join('\n') || null },
     { t:'Машин', v:r => r.cars, num:true, f:int },
     { t:'Км на машину в месяц', tip:'среднее за 12 месяцев файла ГСМ', v:r => r.km, num:true, f:int },
-    { t:'Топливо, сум/км', v:r => r.fuel, num:true, f:km },
+    { t:'Газ', v:r => r.gas },
+    { t:'Цена 1 м³, сум', v:r => r.price, num:true, f:int },
+    { t:'Норма, м³ на 100 км', v:r => r.norm, num:true, f:km },
+    { t:'Топливо, сум/км', tip:'норма × цена куба / 100', v:r => r.fuel, num:true, f:km,
+      title:r => r.total || r.fuel !== null ? null : 'цены газа нет — регион не входит в итог' },
     { t:'ГСМ, млн сум', tip:'км × (топливо + амортизация) × машин', v:r => r.gsm, num:true, f:km },
     { t:'Экономия, млн сум', v:r => r.save, num:true, f:km },
     { t:'Подписка, млн сум', tip:'машин × тариф с НДС × курс', v:r => r.sub, num:true, f:km },
@@ -3148,7 +3164,8 @@ function saasRegionTable(s, regs, sc){
   $('note-saas-reg').textContent = `Если бы подписка была у каждой машины каждого региона: снижение км −${int(s.red)}%` +
     (s.real < 100 ? `, до выплат доходит ${int(s.real)}%` : '') + `, тариф ${usd(s.tariff)} + НДС ${int(s.vat)}%. За год по итогу: ` +
     `подписка ${km(tot.sub * 12)} млн сум (${usd(tot.sub * 12 * 1e6 / s.rate)}), экономия ${km(tot.save * 12)} млн. Машины — водители в последнем ` +
-    'месяце файла ГСМ, км на машину — среднее за 12 месяцев, ставка топлива — сум/км региона за последние месяцы файла. ' +
+    'месяце файла ГСМ, км на машину — среднее за 12 месяцев, топливо — норма газа (м³ на 100 км) × цена куба региона. ' +
+    'Регион без цены газа показан «—» и в итог не входит. ' +
     'Пометка Dextra — где Dextra уже работает; наведите на регион — примечания.';
   csvTables.saas = { cols, rows:[...rows, tot], file:`podpiska_${localDate(new Date())}.csv` };
 }

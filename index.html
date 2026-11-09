@@ -2975,7 +2975,7 @@ function saasDefaults(){
   const target = saasPresets().find(p => p.target);
   return { ...d, red:target ? target.v : null, withSep:false };   // без opt_target_pct — «не хватает чисел»
 }
-/* отдельный город (Ташкент) мог пропасть или остаться без цены газа — тогда в итог он не входит */
+/* отдельный город (Ташкент) мог пропасть или остаться без ставки топлива — тогда в итог он не входит */
 function saasState(){
   const s = { ...saasDefaults(), ...(saasUi || {}) };
   if (!saasRegions().some(saasSepUsable)) s.withSep = false;
@@ -2991,11 +2991,11 @@ function saasRegions(){
     separate:!!r.city && sep.has(r.city), dextra:!!r.city }));
 }
 const saasUsable = r => r.fuel !== null && r.km !== null && r.cars > 0;
-/* отдельный город, который можно посчитать: есть км, машины и цена газа */
+/* отдельный город, который можно посчитать: есть км, машины и ставка топлива (норма × цена куба или из файла ГСМ) */
 const saasSepUsable = r => r.separate && saasUsable(r);
 const saasCost = (s, tariff = s.tariff) => tariff === null || s.vat === null || s.rate === null ? null : tariff * (1 + s.vat / 100) * s.rate;
 
-/* регион «как было» и «с Dextra», суммы в сум за месяц; без км, машин или цены газа — пусто и не в итоге */
+/* регион «как было» и «с Dextra», суммы в сум за месяц; без км, машин или ставки топлива — пусто и не в итоге */
 function saasCalc(r, s, sc){
   if (!saasUsable(r) || s.amort === null) return { ...r, kmWas:null, gsmWas:null, kmNew:null, gsmNew:null, save:null, sub:null, net:null };
   const perKm = r.fuel + s.amort, kmWas = r.cars * r.km, kmNew = kmWas * (1 - s.red / 100);
@@ -3019,7 +3019,7 @@ function renderSaas(force){
   const target = cfg('opt_target_pct');
   $('note-saas').textContent = 'Гипотеза: Dextra работает во всех регионах, и каждая машина в подписке. «Как было» — путевые листы: ' +
     'сколько км машины региона проезжают в месяц (среднее за 12 месяцев файла «ГСМ и амортизация») и сколько стоят эти км по ' +
-    'нынешним ценам — газ (норма м³ на 100 км × цена куба региона; норма выведена из файла ГСМ) и амортизация за км. «С Dextra» — ' +
+    'нынешним ценам — газ (норма м³ на 100 км × цена куба региона; норма выведена из файла ГСМ; у региона без цены газа — сум/км из файла ГСМ) и амортизация за км. «С Dextra» — ' +
     'те же машины, но км меньше на процент оптимизации' + (target === null ? '' : ` (ориентир — цель ${int(target)}%`) +
     (target === null ? '' : '; кнопки — ещё факт городов Dextra и осторожная оценка по IMG)') + '. Обе стороны — по одним ценам, ' +
     'разница только от км. Экономия — разница в деньгах. Подписка — тариф × (1 + НДС) × курс за каждую машину. Экономия станет ' +
@@ -3027,11 +3027,11 @@ function renderSaas(force){
   const regs = saasRegions();
   $('saas-presets').replaceChildren(...saasPresets().map(p => h('button', { class:'pill', type:'button', 'data-v':String(p.v), title:p.tip,
     'aria-pressed':String(p.v === s.red) }, p.label)));
-  /* отдельный город без цены газа посчитать нельзя — кнопок для него нет (строка в таблице остаётся с «—») */
+  /* отдельный город без ставки топлива посчитать нельзя — кнопок для него нет (строка в таблице остаётся с «—») */
   const sepNames = [...new Set(regs.filter(saasSepUsable).map(r => cityName(r.city)))].join(', ');
-  $('saas-total').replaceChildren(...(sepNames ? [[false, 'без: ' + sepNames], [true, 'с ' + sepNames]]
+  $('saas-total').replaceChildren(...(sepNames ? [[false, 'без: ' + sepNames], [true, 'вместе с: ' + sepNames]]
     .map(([v, t]) => h('button', { class:'pill', type:'button', 'data-v':String(v), 'aria-pressed':String(v === s.withSep) }, t))
-    : [h('span', null, 'все регионы с ценой газа')]));
+    : [h('span', null, 'все регионы со ставкой топлива')]));
   renderSaasOut();
 }
 
@@ -3049,7 +3049,7 @@ function renderSaasOut(){
     : missing.length ? ['Не хватает чисел', 'Заполните поля выше или добавьте в настройки: ' + missing.join(', ') + '.']
     : !tot.cars ? ['Нет машин для расчёта', rows.some(r => r.gsmWas !== null)
       ? 'Посчитать можно только отдельные города — включите их кнопкой «В итоге».'
-      : 'У регионов нет машин, км или цены газа (таблица gsm_region_base).'] : null;
+      : 'У регионов нет машин, км или ставки топлива (таблица gsm_region_base).'] : null;
   if (fail){
     put('saas-now', emptyBox(...fail));
     ['saas-chart', 'saas-matrix', 'tbl-saas'].forEach(id => $(id).replaceChildren());
@@ -3170,8 +3170,9 @@ function saasRegionTable(s, rows, tot){
     { t:'Газ', v:r => r.gas },
     { t:'Цена 1 м³, сум', v:r => r.price, num:true, f:int },
     { t:'Газ + амортизация, сум/км', tip:'норма газа × цена куба / 100 + амортизация', v:r => r.fuel === null || r.fuel === undefined ? null : r.fuel + s.amort,
-      num:true, f:km, title:r => r.total ? null : r.fuel === null ? 'цены газа нет — регион не входит в итог'
-        : `газ ${km(r.fuel)} (${km(r.norm)} м³ на 100 км × ${int(r.price)}) + амортизация ${int(s.amort)}` },
+      num:true, f:km, title:r => r.total ? null : r.fuel === null ? 'ставки топлива нет — регион не входит в итог'
+        : `газ ${km(r.fuel)} ` + (r.price === null ? '(цены газа нет — сум/км из файла ГСМ)' : `(${km(r.norm)} м³ на 100 км × ${int(r.price)})`) +
+          ` + амортизация ${int(s.amort)}` },
     { t:'Было: км в месяц', tip:'путевые листы: км на машину (среднее за 12 месяцев) × машин', v:r => r.kmWas, num:true, f:int },
     { t:'Было: ГСМ, млн сум', v:r => M(r.gsmWas), num:true, f:km },
     { t:`С Dextra: км в месяц (−${int(s.red)}%)`, v:r => r.kmNew, num:true, f:int },
@@ -3187,7 +3188,7 @@ function saasRegionTable(s, rows, tot){
   put('tbl-saas', table(cols, rows, { total:tot }));
   $('note-saas-reg').textContent = `«Было» — путевые листы: машины — водители в последнем месяце файла ГСМ, км — среднее за 12 месяцев. ` +
     `«С Dextra» — те же машины, км меньше на ${int(s.red)}%. Деньги — газ (норма × цена куба региона) и амортизация за км. ` +
-    'Регион без цены газа, км или машин показан «—» и в итог не входит. Пометка Dextra — где Dextra уже работает; наведите на ' +
+    'Регион без цены газа берёт сум/км из файла ГСМ (Ташкент); регион без ставки топлива, км или машин показан «—» и в итог не входит. Пометка Dextra — где Dextra уже работает; наведите на ' +
     'регион — примечания.';
   csvTables.saas = { cols, rows:[...rows, tot], file:`gipoteza_${localDate(new Date())}.csv` };
 }

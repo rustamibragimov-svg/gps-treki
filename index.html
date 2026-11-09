@@ -427,6 +427,7 @@
       <section role="tabpanel" id="p-opt" aria-labelledby="t-opt" hidden>
         <div class="bar"><h2>Км на машину в рабочий день: 2026 против 2025</h2>
           <div class="fgroup" id="f-opt-city" role="group" aria-label="Города для оптимизации, можно несколько"></div>
+          <div class="fgroup" id="f-opt-month" role="group" aria-label="Месяц для плиток"></div>
           <button class="btn" data-csv="opt">
             <svg class="i sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>Экспорт</button></div>
         <p class="note" id="note-opt"></p>
@@ -995,6 +996,7 @@ let focusCheck = null;                   // плитка Свода, чьи на
 let weekRows = [], anCities = new Set();  // Аналитика: v_week_control и отмеченные там города (пусто — все)
 let weekError = null;                    // текст ошибки загрузки v_week_control
 let optRows = [], optDocs = [], optCars = [], optCities = new Set(), optError = null;   // Оптимизация: v_opt_period, v_opt_doc, v_opt_car_month, города
+let optMonth = '';                         // Оптимизация: месяц плиток (ГГГГ-ММ-01), '' — последний
 let gsmRegions = [], gsmRegError = null;   // Подписка: gsm_region_base (файл ГСМ по регионам)
 let saasUi = null;                         // Подписка: что пользователь поменял в полях (null — всё из настроек)
 const cfg = k => n(settings[k]);
@@ -2717,9 +2719,20 @@ function gsmMonthChart(rows){
   return wrap;
 }
 
-/* плитки: последний месяц — Dextra, тот же месяц 2025, дельта, IMG-ориентир за день и IMG в окне маршрута */
+/* месяц плиток: выбранный кнопкой (optMonth), а если его нет у этих городов или не выбран — последний */
+const optPick = months => months.find(r => r.period_start === optMonth) || months[months.length - 1];
+/* кнопки месяцев — по месяцам, что есть у отмеченных городов; год пишется, только если месяцы из разных лет */
+function renderOptMonths(months){
+  const pick = optPick(months);
+  const multiYear = new Set(months.map(r => yearOf(r.period_start))).size > 1;
+  $('f-opt-month').replaceChildren(...(months.length ? [h('span', null, 'Месяц:')] : []), ...months.map(r =>
+    h('button', { class:'pill', type:'button', 'data-month':r.period_start, 'aria-pressed':String(r === pick) },
+      cap(MONTHS_RU[Number(r.period_start.slice(5, 7)) - 1]) + (multiYear ? ' ' + yearOf(r.period_start) : '') + (r.open ? ' (идёт)' : ''))));
+}
+
+/* плитки: выбранный месяц — Dextra, тот же месяц 2025, дельта, IMG-ориентир за день и IMG в окне маршрута */
 function optKpis(months){
-  const r = months[months.length - 1];
+  const r = optPick(months);
   if (!r) return null;
   const t = cfg('opt_target_pct'), d = optDelta(r), c = optChange(r);
   const ci = changePct(n(r.img_per_day), n(r.base_per_car_day));
@@ -2737,10 +2750,10 @@ function optKpis(months){
       n(r.img_win_per_day) === null ? 'нет дней с окном маршрута и данными IMG' : optWinText(r)));
 }
 
-/* плитки ГСМ за тот же последний месяц: сколько стоят км путевых листов 2025 и факт Dextra за тот же объём,
+/* плитки ГСМ за тот же выбранный месяц: сколько стоят км путевых листов 2025 и факт Dextra за тот же объём,
    по ставке 2026; рядом — сколько реально заплатили в 2025 */
 function gsmKpis(months){
-  const r = months[months.length - 1];
+  const r = optPick(months);
   if (!r) return null;
   const mon = cap(monthName(r.period_start)) + (r.open ? ' (идёт)' : '');
   const base = gsmBase(r), dx = gsmDx(r), d = gsmDelta(r), c = gsmPct(r);
@@ -2795,13 +2808,15 @@ function renderOptimization(){
     'gsm_region_base, без цены — настройка gsm_fuel_rate; амортизация — gsm_amort_rate) для обеих ' +
     'сторон: км путевых листов год назад и факт Dextra на машину в день за тот же объём работы; факт Dextra — только маршрут, ' +
     'путевой лист — весь день машины, поэтому экономия по Dextra завышена. Период и город сверху на раздел не влияют. Городов можно отметить несколько — км сложатся по ' +
-    'тому же правилу, что и «Все города». Наведите на неделю или месяц — подробности.';
+    'тому же правилу, что и «Все города». Плитки — за месяц, выбранный кнопкой «Месяц» (по умолчанию последний); графики и ' +
+    'таблица — за все месяцы. Наведите на неделю или месяц — подробности.';
   $('note-optd').textContent = 'Кто именно ездил — не важно: сравниваются км машины в день. 2025 — путевой лист (км и дни из листа) ' +
     'или ведомость амортизации (дней в ней нет — км делятся на рабочие дни месяца). 2026 — машина по Dextra в тот же месяц: дни с ' +
     'маршрутом после обкатки и фактом км, факт Dextra в день; IMG — ориентир, км за весь день машины; IMG в окне маршрута — ' +
     'км IMG в окне маршрута Dextra (как в проверке 2) и «Dextra − IMG» в % по тем же дням.';
   const weeks = optSeries('week', optCities, today);
   const months = optSeries('month', optCities, today);
+  renderOptMonths(optError ? [] : months);
   if (optError || !months.length){
     put('opt-charts', optError
       ? emptyBox('Оптимизация не загрузилась', optError + ' Нажмите «Показать» на Своде, чтобы повторить.')
@@ -3261,8 +3276,9 @@ async function signOut(reason){
   loaded = null; openRoute = null; openDay = null; routeHost = 'det'; focusCheck = null;
   weekRows = []; anCities = new Set(); weekError = null;
   pressCities('f-an-city', anCities);
-  optRows = []; optDocs = []; optCars = []; optCities = new Set(); optError = null;
+  optRows = []; optDocs = []; optCars = []; optCities = new Set(); optError = null; optMonth = '';
   pressCities('f-opt-city', optCities);
+  $('f-opt-month').replaceChildren();
   gsmRegions = []; gsmRegError = null; saasUi = null;
   for (const [id] of Object.values(SAAS_FIELDS)) $(id).value = '';
   ['saas-presets', 'saas-basis', 'saas-total'].forEach(id => $(id).replaceChildren());
@@ -3320,6 +3336,15 @@ $('f-opt-city').addEventListener('click', e => {
   const b = e.target.closest('.pill'); if (!b) return;
   optCities = toggleCity(optCities, b.dataset.city);
   try { renderOptimization(); } catch(err){ say('msg', err.message, 'err'); }
+});
+$('f-opt-month').addEventListener('click', e => {
+  const b = e.target.closest('.pill'); if (!b) return;
+  optMonth = b.dataset.month;
+  try {
+    renderOptimization();
+    /* кнопки пересозданы — вернуть фокус на выбранную */
+    [...$('f-opt-month').querySelectorAll('.pill')].find(x => x.dataset.month === optMonth)?.focus();
+  } catch(err){ say('msg', err.message, 'err'); }
 });
 document.querySelectorAll('[data-csv]').forEach(b => b.addEventListener('click', () => downloadCsv(b.dataset.csv)));
 $('img-pick').addEventListener('click', () => $('img-files').click());

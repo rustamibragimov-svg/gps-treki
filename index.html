@@ -449,7 +449,7 @@
           <label>Тариф, $ за машину в месяц, без НДС<input type="number" id="saas-tariff" min="0" step="1"></label>
           <label>НДС, %<input type="number" id="saas-vat" min="0" max="100" step="1"></label>
           <label>Курс, сум за $<input type="number" id="saas-rate" min="1" step="0.01"></label>
-          <label>Амортизация, сум за км<input type="number" id="saas-amort" min="0" step="10"></label>
+          <label title="Для всех регионов, кроме тех, у кого своя ставка в таблице gsm_region_base (Ташкент — 0: машины свои)">Амортизация, сум за км<input type="number" id="saas-amort" min="0" step="10"></label>
           <div class="f"><span>В итоге</span>
             <div class="fgroup" id="saas-total" role="group" aria-label="Что входит в итог"></div></div>
           <button class="btn reset" id="saas-reset" type="button">Вернуть из настроек</button>
@@ -2769,6 +2769,9 @@ function gsmKpis(months){
       `«По факту Dextra» — сколько заплатили бы за тот же объём работы, что в ${by} (водителей × рабочих дней), если бы платили ` +
       `по факту Dextra на машину в день, по ставке ${ny} (${gsmRateText(r)}). Газ подорожал, поэтому в разнице есть и рост цены, ` +
       'а не только меньше км. Факт Dextra — только маршрут, а путевой лист — весь день машины, поэтому экономия по Dextra завышена.' +
+      /* машины свои (Ташкент): амортизации в этом году нет, а в заплаченном год назад она есть — сказать прямо */
+      (n(r.amort_rate) === 0 && n(r.base_paid_amort) > 0 ? ` Амортизации в ${ny} нет — машины свои, а в ${by} заплатили и её: ` +
+        `${mln(n(r.base_paid_amort))} млн сум из ${mln(base)}.` : '') +
       (r.open ? ' Месяц ещё идёт: сумма по Dextra — по дням, что уже прошли, в пересчёте на весь месяц.' : '')),
     h('div', { class:'kpis opt-kpis' },
       tile(`${r.base_month ? cap(monthName(r.base_month)) : 'Год назад'} · заплатили по путевым листам`, mlnVal(base),
@@ -2986,19 +2989,21 @@ function saasState(){
 function saasRegions(){
   const sep = separateCities();
   return gsmRegions.map(r => ({ region:r.region, city:r.city, note:r.note, cars:n(r.cars), km:n(r.km_car_month), fuel:n(r.fuel_rate),
-    gas:r.gas_kind || null, price:n(r.gas_price), norm:n(r.gas_norm),
+    gas:r.gas_kind || null, price:n(r.gas_price), norm:n(r.gas_norm), amortOwn:n(r.amort_rate),   // своя амортизация (Ташкент — 0)
     /* city — код города Dextra: там Dextra уже работает (Ташкент тоже, хоть и смотрится отдельно) */
     separate:!!r.city && sep.has(r.city), dextra:!!r.city }));
 }
 const saasUsable = r => r.fuel !== null && r.km !== null && r.cars > 0;
+/* амортизация региона: своя из gsm_region_base (машины свои — 0), иначе поле «Амортизация» */
+const saasAmort = (r, s) => r.amortOwn ?? s.amort;
 /* отдельный город, который можно посчитать: есть км, машины и ставка топлива (норма × цена куба или из файла ГСМ) */
 const saasSepUsable = r => r.separate && saasUsable(r);
 const saasCost = (s, tariff = s.tariff) => tariff === null || s.vat === null || s.rate === null ? null : tariff * (1 + s.vat / 100) * s.rate;
 
 /* регион «как было» и «с Dextra», суммы в сум за месяц; без км, машин или ставки топлива — пусто и не в итоге */
 function saasCalc(r, s, sc){
-  if (!saasUsable(r) || s.amort === null) return { ...r, kmWas:null, gsmWas:null, kmNew:null, gsmNew:null, save:null, sub:null, net:null };
-  const perKm = r.fuel + s.amort, kmWas = r.cars * r.km, kmNew = kmWas * (1 - s.red / 100);
+  if (!saasUsable(r) || saasAmort(r, s) === null) return { ...r, kmWas:null, gsmWas:null, kmNew:null, gsmNew:null, save:null, sub:null, net:null };
+  const perKm = r.fuel + saasAmort(r, s), kmWas = r.cars * r.km, kmNew = kmWas * (1 - s.red / 100);
   const gsmWas = kmWas * perKm, gsmNew = kmNew * perKm, save = gsmWas - gsmNew, sub = r.cars * sc;
   return { ...r, kmWas, gsmWas, kmNew, gsmNew, save, sub, net:save - sub };
 }
@@ -3019,7 +3024,7 @@ function renderSaas(force){
   const target = cfg('opt_target_pct');
   $('note-saas').textContent = 'Гипотеза: Dextra работает во всех регионах, и каждая машина в подписке. «Как было» — путевые листы: ' +
     'сколько км машины региона проезжают в месяц (среднее за 12 месяцев файла «ГСМ и амортизация») и сколько стоят эти км по ' +
-    'нынешним ценам — газ (норма м³ на 100 км × цена куба региона; норма выведена из файла ГСМ; у региона без цены газа — сум/км из файла ГСМ) и амортизация за км. «С Dextra» — ' +
+    'нынешним ценам — газ (норма м³ на 100 км × цена куба региона; норма выведена из файла ГСМ; у региона без цены газа — своя ставка сум/км; где машины свои, амортизации нет) и амортизация за км. «С Dextra» — ' +
     'те же машины, но км меньше на процент оптимизации' + (target === null ? '' : ` (ориентир — цель ${int(target)}%`) +
     (target === null ? '' : '; кнопки — ещё факт городов Dextra и осторожная оценка по IMG)') + '. Обе стороны — по одним ценам, ' +
     'разница только от км. Экономия — разница в деньгах. Подписка — тариф × (1 + НДС) × курс за каждую машину. Экономия станет ' +
@@ -3040,7 +3045,9 @@ function renderSaasOut(){
   const s = saasState(), regs = saasRegions();
   setPressed('saas-presets', b => Number(b.dataset.v) === s.red);
   setPressed('saas-total', b => b.dataset.v === String(s.withSep));
-  const missing = Object.entries(SAAS_FIELDS).filter(([k, [, key]]) => s[k] === null).map(([k, [, key]]) => key || 'opt_target_pct');
+  /* общая амортизация нужна, только если есть регион без своей */
+  const missing = Object.entries(SAAS_FIELDS).filter(([k]) => s[k] === null && (k !== 'amort' || regs.some(r => r.amortOwn === null)))
+    .map(([k, [, key]]) => key || 'opt_target_pct');
   const sc = saasCost(s);
   const rows = missing.length ? [] : regs.map(r => saasCalc(r, s, sc));
   const tot = saasTotal(rows, s);
@@ -3169,10 +3176,10 @@ function saasRegionTable(s, rows, tot){
     { t:'Машин', v:r => r.cars, num:true, f:int },
     { t:'Газ', v:r => r.gas },
     { t:'Цена 1 м³, сум', v:r => r.price, num:true, f:int },
-    { t:'Газ + амортизация, сум/км', tip:'норма газа × цена куба / 100 + амортизация', v:r => r.fuel === null || r.fuel === undefined ? null : r.fuel + s.amort,
+    { t:'Газ + амортизация, сум/км', tip:'норма газа × цена куба / 100 + амортизация', v:r => r.fuel === null || r.fuel === undefined || saasAmort(r, s) === null ? null : r.fuel + saasAmort(r, s),
       num:true, f:km, title:r => r.total ? null : r.fuel === null ? 'ставки топлива нет — регион не входит в итог'
-        : `газ ${km(r.fuel)} ` + (r.price === null ? '(цены газа нет — сум/км из файла ГСМ)' : `(${km(r.norm)} м³ на 100 км × ${int(r.price)})`) +
-          ` + амортизация ${int(s.amort)}` },
+        : `газ ${km(r.fuel)} ` + (r.price === null ? '(цены газа нет — своя ставка сум/км)' : `(${km(r.norm)} м³ на 100 км × ${int(r.price)})`) +
+          (r.amortOwn === 0 ? ' + амортизации нет (машины свои)' : ` + амортизация ${int(saasAmort(r, s))}`) },
     { t:'Было: км в месяц', tip:'путевые листы: км на машину (среднее за 12 месяцев) × машин', v:r => r.kmWas, num:true, f:int },
     { t:'Было: ГСМ, млн сум', v:r => M(r.gsmWas), num:true, f:km },
     { t:`С Dextra: км в месяц (−${int(s.red)}%)`, v:r => r.kmNew, num:true, f:int },
@@ -3188,7 +3195,7 @@ function saasRegionTable(s, rows, tot){
   put('tbl-saas', table(cols, rows, { total:tot }));
   $('note-saas-reg').textContent = `«Было» — путевые листы: машины — водители в последнем месяце файла ГСМ, км — среднее за 12 месяцев. ` +
     `«С Dextra» — те же машины, км меньше на ${int(s.red)}%. Деньги — газ (норма × цена куба региона) и амортизация за км. ` +
-    'Регион без цены газа берёт сум/км из файла ГСМ (Ташкент); регион без ставки топлива, км или машин показан «—» и в итог не входит. Пометка Dextra — где Dextra уже работает; наведите на ' +
+    'Регион без цены газа берёт свою ставку сум/км (Ташкент, без амортизации — машины свои); регион без ставки топлива, км или машин показан «—» и в итог не входит. Пометка Dextra — где Dextra уже работает; наведите на ' +
     'регион — примечания.';
   csvTables.saas = { cols, rows:[...rows, tot], file:`gipoteza_${localDate(new Date())}.csv` };
 }

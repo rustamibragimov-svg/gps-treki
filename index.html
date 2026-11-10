@@ -463,7 +463,8 @@
           <label>Курс, сум за $<input type="number" id="saas-rate" min="1" step="0.01"></label>
           <label title="Для всех регионов, кроме тех, у кого своя ставка в таблице gsm_region_base (Ташкент — 0: машины свои)">Амортизация, сум за км<input type="number" id="saas-amort" min="0" step="10"></label>
           <div class="f"><span>В итоге</span>
-            <div class="fgroup" id="saas-total" role="group" aria-label="Что входит в итог"></div></div>
+            <div class="fgroup" id="saas-total" role="group" aria-label="Что входит в итог"></div>
+            <div class="fgroup" id="saas-winter" role="group" aria-label="Зимние расходы на топливо"></div></div>
           <button class="btn reset" id="saas-reset" type="button">Вернуть из настроек</button>
         </div>
         <div id="saas-now"></div>
@@ -547,6 +548,7 @@
           <ul>
             <li><b>Как было (путевые листы, ориентир):</b> <span class="f">км в месяц = машин × средний пробег машины за месяц</span>; машин — водителей в последнем месяце файла ГСМ, средний пробег — за 12 месяцев файла ГСМ: <span class="f">пробег за 12 месяцев / сумма водителей за 12 месяцев</span>.</li>
             <li><b>Деньги «как было»:</b> <span class="f">км × (газ за км + амортизация за км)</span> по нынешним ценам — это средний месяц, а не сумма, заплаченная в конкретном месяце.</li>
+            <li><b>Кнопка «+ зимние расходы»:</b> зимой газа не хватает, часть машин ездит на бензине, и 1 км дороже. С кнопкой топливо среднего месяца = <span class="f">(ставка × (12 − зимних мес.) + зимняя ставка × зимних мес.) / 12</span>; зимняя ставка — топливо / км по файлу ГСМ за декабрь – март (если она ниже обычной — берётся обычная), зимних месяцев — настройка gsm_winter_months. Зимняя ставка — факт прошлой зимы по тогдашним ценам газа, обычная — по нынешним. У региона со своей ставкой (Ташкент) зимней надбавки нет.</li>
             <li><b>С Dextra:</b> те же машины, <span class="f">км × (1 − оптимизация %)</span>; оптимизация по умолчанию — цель, кнопки — факт городов Dextra и IMG за последний закрытый месяц.</li>
             <li><b>Экономия:</b> <span class="f">деньги «как было» − деньги «с Dextra»</span>.</li>
             <li><b>Подписка:</b> <span class="f">машин × тариф × (1 + НДС) × курс</span> — за каждую машину каждого региона.</li>
@@ -3089,7 +3091,7 @@ function saasPresetsCalc(){
 function saasDefaults(){
   const d = Object.fromEntries(Object.entries(SAAS_FIELDS).map(([k, [, key]]) => [k, key ? cfg(key) : null]));
   const target = saasPresets().find(p => p.target);
-  return { ...d, red:target ? target.v : null, withSep:false };   // без opt_target_pct — «не хватает чисел»
+  return { ...d, red:target ? target.v : null, withSep:false, withWinter:false };   // без opt_target_pct — «не хватает чисел»
 }
 /* отдельный город (Ташкент) мог пропасть или остаться без ставки топлива — тогда в итог он не входит */
 function saasState(){
@@ -3103,12 +3105,21 @@ function saasRegions(){
   const sep = separateCities();
   return gsmRegions.map(r => ({ region:r.region, city:r.city, note:r.note, cars:n(r.cars), km:n(r.km_car_month), fuel:n(r.fuel_rate),
     gas:r.gas_kind || null, price:n(r.gas_price), norm:n(r.gas_norm), amortOwn:n(r.amort_rate),   // своя амортизация (Ташкент — 0)
+    winter:n(r.winter_fuel_rate),   // топливо за км зимой (дек–мар), файл ГСМ
     /* city — код города Dextra: там Dextra уже работает (Ташкент тоже, хоть и смотрится отдельно) */
     separate:!!r.city && sep.has(r.city), dextra:!!r.city }));
 }
 const saasUsable = r => r.fuel !== null && r.km !== null && r.cars > 0;
 /* амортизация региона: своя из gsm_region_base (машины свои — 0), иначе поле «Амортизация» */
 const saasAmort = (r, s) => r.amortOwn ?? s.amort;
+/* топливо за км среднего месяца: с кнопкой «зимние расходы» — зимние месяцы (gsm_winter_months) по зимней ставке, если она
+   выше; без кнопки или без зимней ставки — ставка как есть */
+const saasWinterMonths = () => { const w = cfg('gsm_winter_months'); return w !== null && w > 0 && w <= 12 ? w : null; };
+function saasFuel(r, s){
+  const w = saasWinterMonths();
+  if (r.fuel === null || r.fuel === undefined || !s.withWinter || w === null || r.winter === null || r.winter === undefined) return r.fuel ?? null;
+  return (r.fuel * (12 - w) + Math.max(r.winter, r.fuel) * w) / 12;
+}
 /* отдельный город, который можно посчитать: есть км, машины и ставка топлива (норма × цена куба или из файла ГСМ) */
 const saasSepUsable = r => r.separate && saasUsable(r);
 const saasCost = (s, tariff = s.tariff) => tariff === null || s.vat === null || s.rate === null ? null : tariff * (1 + s.vat / 100) * s.rate;
@@ -3116,7 +3127,7 @@ const saasCost = (s, tariff = s.tariff) => tariff === null || s.vat === null || 
 /* регион «как было» и «с Dextra», суммы в сум за месяц; без км, машин или ставки топлива — пусто и не в итоге */
 function saasCalc(r, s, sc){
   if (!saasUsable(r) || saasAmort(r, s) === null) return { ...r, kmWas:null, gsmWas:null, kmNew:null, gsmNew:null, save:null, sub:null, net:null };
-  const perKm = r.fuel + saasAmort(r, s), kmWas = r.cars * r.km, kmNew = kmWas * (1 - s.red / 100);
+  const perKm = saasFuel(r, s) + saasAmort(r, s), kmWas = r.cars * r.km, kmNew = kmWas * (1 - s.red / 100);
   const gsmWas = kmWas * perKm, gsmNew = kmNew * perKm, save = gsmWas - gsmNew, sub = r.cars * sc;
   return { ...r, kmWas, gsmWas, kmNew, gsmNew, save, sub, net:save - sub };
 }
@@ -3141,7 +3152,8 @@ function renderSaas(force){
     'те же машины, но км меньше на процент оптимизации' + (target === null ? '' : ` (ориентир — цель ${int(target)}%`) +
     (target === null ? '' : '; кнопки — ещё факт городов Dextra и осторожная оценка по IMG)') + '. Обе стороны — по одним ценам, ' +
     'разница только от км. Экономия — разница в деньгах. Подписка — тариф × (1 + НДС) × курс за каждую машину. Экономия станет ' +
-    'деньгами, если водителям платить по км Dextra. Поля меняют только расчёт на экране, в базу ничего не пишется.';
+    'деньгами, если водителям платить по км Dextra. Кнопка «+ зимние расходы» — зимой (декабрь – март) 1 км топлива дороже: часть машин ' +
+    'ездит на бензине. Поля меняют только расчёт на экране, в базу ничего не пишется.';
   const regs = saasRegions();
   $('saas-presets').replaceChildren(...saasPresets().map(p => h('button', { class:'pill', type:'button', 'data-v':String(p.v), title:p.tip,
     'aria-pressed':String(p.v === s.red) }, p.label)));
@@ -3150,6 +3162,9 @@ function renderSaas(force){
   $('saas-total').replaceChildren(...(sepNames ? [[false, 'без: ' + sepNames], [true, 'вместе с: ' + sepNames]]
     .map(([v, t]) => h('button', { class:'pill', type:'button', 'data-v':String(v), 'aria-pressed':String(v === s.withSep) }, t))
     : [h('span', null, 'все регионы со ставкой топлива')]));
+  /* зимние расходы — отдельная кнопка-переключатель; без настройки gsm_winter_months её нет */
+  $('saas-winter').replaceChildren(...(saasWinterMonths() === null ? [] : [h('button', { class:'pill', type:'button', 'data-v':'',
+    title:'Зимой газа не хватает и часть машин ездит на бензине: топливо за км по файлу ГСМ за декабрь – март' }, '+ зимние расходы')]));
   renderSaasOut();
 }
 
@@ -3158,6 +3173,7 @@ function renderSaasOut(){
   const s = saasState(), regs = saasRegions();
   setPressed('saas-presets', b => Number(b.dataset.v) === s.red);
   setPressed('saas-total', b => b.dataset.v === String(s.withSep));
+  for (const b of $('saas-winter').querySelectorAll('.pill')){ b.dataset.v = String(!s.withWinter); b.setAttribute('aria-pressed', String(s.withWinter)); }
   /* общая амортизация нужна, только если есть регион без своей */
   const missing = Object.entries(SAAS_FIELDS).filter(([k]) => s[k] === null && (k !== 'amort' || regs.some(r => r.amortOwn === null)))
     .map(([k, [, key]]) => key || 'opt_target_pct');
@@ -3204,7 +3220,8 @@ function saasNow(s, t, sc){
     h('h3', { class:'gsm-head' }, `Вся сеть в месяц: регионов ${int(t.regions)}, машин ${int(t.cars)}`),
     h('p', { class:'note' }, `Путевые листы — ориентир «как было». Средняя машина: ${int(t.kmWas / t.cars)} км и ` +
       `${mln2(t.gsmWas / t.cars)} млн сум в месяц; с Dextra — ${int(t.kmNew / t.cars)} км и ${mln2(t.gsmNew / t.cars)} млн сум; ` +
-      `подписка — ${mln2(sc)} млн сум за машину.`),
+      `подписка — ${mln2(sc)} млн сум за машину.` + (s.withWinter && saasWinterMonths() !== null
+        ? ` С зимними расходами: ${int(saasWinterMonths())} мес. в году топливо за км — по зимней ставке файла ГСМ (декабрь – март).` : '')),
     h('div', { class:'kpis opt-kpis' },
       tile('Как было · путевые листы', M(t.gsmWas), `газ + амортизация по нынешним ценам · ${int(t.kmWas)} км в месяц`),
       tile(`С Dextra · −${red}% км`, M(t.gsmNew), `газ + амортизация по тем же ценам · ${int(t.kmNew)} км в месяц`),
@@ -3289,10 +3306,11 @@ function saasRegionTable(s, rows, tot){
     { t:'Машин', v:r => r.cars, num:true, f:int },
     { t:'Газ', v:r => r.gas },
     { t:'Цена 1 м³, сум', v:r => r.price, num:true, f:int },
-    { t:'Газ + амортизация, сум/км', tip:'норма газа × цена куба / 100 + амортизация', v:r => r.fuel === null || r.fuel === undefined || saasAmort(r, s) === null ? null : r.fuel + saasAmort(r, s),
+    { t:'Газ + амортизация, сум/км', tip:'норма газа × цена куба / 100 + амортизация', v:r => r.fuel === null || r.fuel === undefined || saasAmort(r, s) === null ? null : saasFuel(r, s) + saasAmort(r, s),
       num:true, f:km, title:r => r.total ? null : r.fuel === null ? 'ставки топлива нет — регион не входит в итог'
         : `газ ${km(r.fuel)} ` + (r.price === null ? '(цены газа нет — своя ставка сум/км)' : `(${km(r.norm)} м³ на 100 км × ${int(r.price)})`) +
-          (r.amortOwn === 0 ? ' + амортизации нет (машины свои)' : ` + амортизация ${int(saasAmort(r, s))}`) },
+          (r.amortOwn === 0 ? ' + амортизации нет (машины свои)' : ` + амортизация ${int(saasAmort(r, s))}`) +
+          (s.withWinter && saasFuel(r, s) !== r.fuel ? `; с зимой газ в среднем ${km(saasFuel(r, s))}: зимой ${km(r.winter)} × ${int(saasWinterMonths())} мес.` : '') },
     { t:'Было: км в месяц', tip:'путевые листы: км на машину (среднее за 12 месяцев) × машин', v:r => r.kmWas, num:true, f:int },
     { t:'Было: ГСМ, млн сум', v:r => M(r.gsmWas), num:true, f:km },
     { t:`С Dextra: км в месяц (−${int(s.red)}%)`, v:r => r.kmNew, num:true, f:int },
@@ -3331,17 +3349,18 @@ const saasPick = (id, key, parse) => $(id).addEventListener('click', e => {
 });
 saasPick('saas-presets', 'red', Number);
 saasPick('saas-total', 'withSep', v => v === 'true');
+saasPick('saas-winter', 'withWinter', v => v === 'true');
 $('saas-reset').addEventListener('click', () => { saasUi = null; renderSaas(true); });
 
 /* ============ справочник: откуда данные и как считается ============ */
 /* Текст методики — в разметке (без цифр бизнеса: исходник публичный); цифры — живые таблицы из базы:
    справочник регионов (gsm_region_base) и настройки, от которых зависят Оптимизация и Гипотеза. */
 const REF_SETTINGS = ['opt_target_pct', 'gsm_amort_rate', 'gsm_fuel_rate', 'saas_tariff_usd', 'saas_vat_pct', 'saas_usd_rate',
-  'high_season_from', 'high_season_to', 'opt_days_off', 'dextra_return_fix_date', 'separate_cities'];
+  'high_season_from', 'high_season_to', 'opt_days_off', 'dextra_return_fix_date', 'separate_cities', 'gsm_winter_months'];
 function renderRef(){
   const amortAll = cfg('gsm_amort_rate');
   const regs = gsmRegions.map(r => ({ ...r, cars:n(r.cars), km:n(r.km_car_month), price:n(r.gas_price), norm:n(r.gas_norm),
-    fuel:n(r.fuel_rate), own:n(r.amort_rate) }));
+    fuel:n(r.fuel_rate), own:n(r.amort_rate), winter:n(r.winter_fuel_rate) }));
   put('tbl-ref-regions', gsmRegError ? emptyBox('Справочник регионов не загрузился', gsmRegError) : table([
     { t:'Регион', v:r => r.region },
     { t:'Код Dextra', tip:'есть — Dextra в регионе работает', v:r => r.city, mono:true },
@@ -3352,6 +3371,7 @@ function renderRef(){
     { t:'Норма, м³ на 100 км', v:r => r.price === null ? null : r.norm, num:true, f:km },
     { t:'Топливо, сум/км', tip:'норма × цена / 100; без цены газа — своя ставка', v:r => r.fuel, num:true, f:km,
       title:r => r.fuel === null ? null : r.price === null ? 'своя ставка — цены газа нет' : `${km(r.norm)} × ${int(r.price)} / 100` },
+    { t:'Топливо зимой, сум/км', tip:'файл ГСМ, декабрь – март: для кнопки «+ зимние расходы» в Гипотезе', v:r => r.winter, num:true, f:km },
     { t:'Амортизация, сум/км', tip:'своя у региона или общая из настроек', v:r => r.own ?? amortAll, num:true, f:int,
       title:r => r.own === null ? 'общая — настройка gsm_amort_rate' : r.own === 0 ? 'нет — машины свои' : 'своя ставка региона' },
     { t:'Примечание', v:r => r.note },
@@ -3439,7 +3459,7 @@ async function signOut(reason){
   $('f-opt-month').replaceChildren();
   gsmRegions = []; gsmRegError = null; saasUi = null; saasPresetMemo = { rows:null, settings:null, val:[] };
   for (const [id] of Object.values(SAAS_FIELDS)) $(id).value = '';
-  ['saas-presets', 'saas-total'].forEach(id => $(id).replaceChildren());
+  ['saas-presets', 'saas-total', 'saas-winter'].forEach(id => $(id).replaceChildren());
   aliasMap = new Map(); imgLoads = []; imgSync = []; imgDraft = []; knownVehicles = null;
   $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');
   ['tbl-img-preview', 'tbl-img-loads', 'tbl-img-sync'].forEach(id => $(id).replaceChildren());

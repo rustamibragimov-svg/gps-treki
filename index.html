@@ -464,7 +464,8 @@
           <label title="Для всех регионов, кроме тех, у кого своя ставка в таблице gsm_region_base (Ташкент — 0: машины свои)">Амортизация, сум за км<input type="number" id="saas-amort" min="0" step="10"></label>
           <div class="f"><span>В итоге</span>
             <div class="fgroup" id="saas-total" role="group" aria-label="Что входит в итог"></div>
-            <div class="fgroup" id="saas-winter" role="group" aria-label="Зимние расходы на топливо"></div></div>
+            <div class="fgroup" id="saas-winter" role="group" aria-label="Зимние расходы на топливо"></div>
+            <div class="fgroup" id="saas-img" role="group" aria-label="Расход на IMG"></div></div>
           <button class="btn reset" id="saas-reset" type="button">Вернуть из настроек</button>
         </div>
         <div id="saas-now"></div>
@@ -551,8 +552,8 @@
             <li><b>Кнопка «+ зимние расходы»:</b> зимой газа не хватает, часть машин ездит на бензине, и 1 км дороже. С кнопкой топливо среднего месяца = <span class="f">(ставка × (12 − зимних мес.) + зимняя ставка × зимних мес.) / 12</span>; зимняя ставка — топливо / км по файлу ГСМ за декабрь – март (если она ниже обычной — берётся обычная), зимних месяцев — настройка gsm_winter_months. Зимняя ставка — факт прошлой зимы по тогдашним ценам газа, обычная — по нынешним. У региона со своей ставкой (Ташкент) зимней надбавки нет.</li>
             <li><b>С Dextra:</b> те же машины, <span class="f">км × (1 − оптимизация %)</span>; оптимизация по умолчанию — цель, кнопки — факт городов Dextra и IMG за последний закрытый месяц.</li>
             <li><b>Экономия:</b> <span class="f">деньги «как было» − деньги «с Dextra»</span>.</li>
-            <li><b>Подписка:</b> <span class="f">машин × тариф × (1 + НДС) × курс</span> — за каждую машину каждого региона.</li>
-            <li><b>Покрытие:</b> <span class="f">экономия / подписка</span>; больше 100% — подписка окупается. <b>Оптимизация для нуля:</b> <span class="f">подписка / деньги «как было»</span>. <b>Цена для нуля:</b> <span class="f">экономия на машину / (1 + НДС) / курс</span>.</li>
+            <li><b>Подписка:</b> <span class="f">машин × тариф × (1 + НДС) × курс</span> — за каждую машину каждого региона. С кнопкой «+ расход IMG» к ней добавляется <span class="f">машин × расход IMG за машину</span> (настройка saas_img_cost, с НДС).</li>
+            <li><b>Покрытие:</b> <span class="f">экономия / подписка</span>; больше 100% — подписка окупается. <b>Оптимизация для нуля:</b> <span class="f">подписка / деньги «как было»</span>. <b>Цена для нуля:</b> <span class="f">(экономия на машину − IMG) / (1 + НДС) / курс</span> — тариф Dextra без НДС.</li>
           </ul>
         </div>
 
@@ -3091,7 +3092,7 @@ function saasPresetsCalc(){
 function saasDefaults(){
   const d = Object.fromEntries(Object.entries(SAAS_FIELDS).map(([k, [, key]]) => [k, key ? cfg(key) : null]));
   const target = saasPresets().find(p => p.target);
-  return { ...d, red:target ? target.v : null, withSep:false, withWinter:false };   // без opt_target_pct — «не хватает чисел»
+  return { ...d, red:target ? target.v : null, withSep:false, withWinter:false, withImg:false };   // без opt_target_pct — «не хватает чисел»
 }
 /* отдельный город (Ташкент) мог пропасть или остаться без ставки топлива — тогда в итог он не входит */
 function saasState(){
@@ -3123,6 +3124,11 @@ function saasFuel(r, s){
 /* отдельный город, который можно посчитать: есть км, машины и ставка топлива (норма × цена куба или из файла ГСМ) */
 const saasSepUsable = r => r.separate && saasUsable(r);
 const saasCost = (s, tariff = s.tariff) => tariff === null || s.vat === null || s.rate === null ? null : tariff * (1 + s.vat / 100) * s.rate;
+/* расход на IMG (Wialon) за машину в месяц с НДС — настройка saas_img_cost; кнопка «+ расход IMG» добавляет его к подписке */
+const saasImgCost = () => { const v = cfg('saas_img_cost'); return v !== null && v >= 0 ? v : null; };
+const saasImg = s => s.withImg && saasImgCost() !== null ? saasImgCost() : 0;
+/* стоимость одной машины в месяц: подписка Dextra с НДС + IMG, если кнопка включена */
+const saasCarCost = (s, tariff = s.tariff) => { const c = saasCost(s, tariff); return c === null ? null : c + saasImg(s); };
 
 /* регион «как было» и «с Dextra», суммы в сум за месяц; без км, машин или ставки топлива — пусто и не в итоге */
 function saasCalc(r, s, sc){
@@ -3151,7 +3157,8 @@ function renderSaas(force){
     'нынешним ценам — газ (норма м³ на 100 км × цена куба региона; норма выведена из файла ГСМ; у региона без цены газа — своя ставка сум/км; где машины свои, амортизации нет) и амортизация за км. «С Dextra» — ' +
     'те же машины, но км меньше на процент оптимизации' + (target === null ? '' : ` (ориентир — цель ${int(target)}%`) +
     (target === null ? '' : '; кнопки — ещё факт городов Dextra и осторожная оценка по IMG)') + '. Обе стороны — по одним ценам, ' +
-    'разница только от км. Экономия — разница в деньгах. Подписка — тариф × (1 + НДС) × курс за каждую машину. Экономия станет ' +
+    'разница только от км. Экономия — разница в деньгах. Подписка — тариф × (1 + НДС) × курс за каждую машину; кнопка «+ расход IMG» добавляет расход на IMG (Wialon) за машину. ' +
+    'Экономия станет ' +
     'деньгами, если водителям платить по км Dextra. Кнопка «+ зимние расходы» — зимой (декабрь – март) 1 км топлива дороже: часть машин ' +
     'ездит на бензине. Поля меняют только расчёт на экране, в базу ничего не пишется.';
   const regs = saasRegions();
@@ -3165,6 +3172,8 @@ function renderSaas(force){
   /* зимние расходы — отдельная кнопка-переключатель; без настройки gsm_winter_months её нет */
   $('saas-winter').replaceChildren(...(saasWinterMonths() === null ? [] : [h('button', { class:'pill', type:'button', 'data-v':'',
     title:'Зимой газа не хватает и часть машин ездит на бензине: топливо за км по файлу ГСМ за декабрь – март' }, '+ зимние расходы')]));
+  $('saas-img').replaceChildren(...(saasImgCost() === null ? [] : [h('button', { class:'pill', type:'button', 'data-v':'',
+    title:'Расход на IMG (Wialon) за каждую машину в месяц с НДС добавляется к подписке Dextra' }, '+ расход IMG')]));
   renderSaasOut();
 }
 
@@ -3174,10 +3183,11 @@ function renderSaasOut(){
   setPressed('saas-presets', b => Number(b.dataset.v) === s.red);
   setPressed('saas-total', b => b.dataset.v === String(s.withSep));
   for (const b of $('saas-winter').querySelectorAll('.pill')){ b.dataset.v = String(!s.withWinter); b.setAttribute('aria-pressed', String(s.withWinter)); }
+  for (const b of $('saas-img').querySelectorAll('.pill')){ b.dataset.v = String(!s.withImg); b.setAttribute('aria-pressed', String(s.withImg)); }
   /* общая амортизация нужна, только если есть регион без своей */
   const missing = Object.entries(SAAS_FIELDS).filter(([k]) => s[k] === null && (k !== 'amort' || regs.some(r => r.amortOwn === null)))
     .map(([k, [, key]]) => key || 'opt_target_pct');
-  const sc = saasCost(s);
+  const sc = saasCarCost(s);   // на машину: Dextra с НДС (+ IMG, если кнопка включена)
   const rows = missing.length ? [] : regs.map(r => saasCalc(r, s, sc));
   const tot = saasTotal(rows, s);
   const fail = gsmRegError ? ['ГСМ регионов не загрузился', gsmRegError + ' Нажмите «Показать» на Своде, чтобы повторить.']
@@ -3204,7 +3214,10 @@ function saasNow(s, t, sc){
   /* покрытие вниз до целого: 99,6% — это ещё «не окупается», а не «100%» */
   const cover = t.sub > 0 ? Math.floor(t.save / t.sub * 100) : null;
   const beRed = t.gsmWas > 0 ? t.sub / t.gsmWas * 100 : null;
-  const bePrice = s.rate ? t.save / t.cars / (1 + s.vat / 100) / s.rate : null;
+  /* цена Dextra для нуля: экономия на машину минус IMG (если включён), без НДС, в долларах */
+  const bePrice = s.rate ? (t.save / t.cars - saasImg(s)) / (1 + s.vat / 100) / s.rate : null;
+  /* тариф, при котором экономия вдвое больше всей подписки (Dextra + IMG) */
+  const be2Price = s.rate ? (t.save / t.cars / 2 - saasImg(s)) / (1 + s.vat / 100) / s.rate : null;
   const tile = (label, value, sub, cls) => h('div', { class:'kpi' }, h('span', null, label),
     h('b', { class:cls || null }, value), sub ? h('em', null, sub) : null);
   const M = v => [mln(v), h('small', null, ' млн сум')];
@@ -3214,25 +3227,30 @@ function saasNow(s, t, sc){
       `подписка за ${int(t.cars)} машин — ${mln(t.sub)} млн. Экономия покрывает подписку: ${signedMln(t.net * 12)} млн сум в год.`
     : `Если Dextra будет во всех регионах и даст −${red}% км, экономия на газе и амортизации — ${mln(t.save)} млн сум в месяц, ` +
       `а подписка за ${int(t.cars)} машин — ${mln(t.sub)} млн. Экономия покрывает только ${pct1(cover)} подписки: ` +
-      `${signedMln(t.net * 12)} млн сум в год. В ноль — при тарифе не выше ${usd(bePrice)} без НДС или при оптимизации ` +
+      `${signedMln(t.net * 12)} млн сум в год. В ноль — ` + (bePrice !== null && bePrice < 0 ? 'даже при бесплатной Dextra не выйти (экономия меньше IMG), только ' :
+        `при тарифе не выше ${usd(bePrice)} без НДС или `) + `при оптимизации ` +
       `${beRed === null || beRed > 100 ? 'больше 100' : int(beRed)}% км.`;
   return h('div', null,
     h('h3', { class:'gsm-head' }, `Вся сеть в месяц: регионов ${int(t.regions)}, машин ${int(t.cars)}`),
     h('p', { class:'note' }, `Путевые листы — ориентир «как было». Средняя машина: ${int(t.kmWas / t.cars)} км и ` +
       `${mln2(t.gsmWas / t.cars)} млн сум в месяц; с Dextra — ${int(t.kmNew / t.cars)} км и ${mln2(t.gsmNew / t.cars)} млн сум; ` +
-      `подписка — ${mln2(sc)} млн сум за машину.` + (s.withWinter && saasWinterMonths() !== null
+      `подписка${saasImg(s) ? ' Dextra + IMG' : ''} — ${mln2(sc)} млн сум за машину.` + (s.withWinter && saasWinterMonths() !== null
         ? ` С зимними расходами: ${int(saasWinterMonths())} мес. в году топливо за км — по зимней ставке файла ГСМ (декабрь – март).` : '')),
     h('div', { class:'kpis opt-kpis' },
       tile('Как было · путевые листы', M(t.gsmWas), `газ + амортизация по нынешним ценам · ${int(t.kmWas)} км в месяц`),
       tile(`С Dextra · −${red}% км`, M(t.gsmNew), `газ + амортизация по тем же ценам · ${int(t.kmNew)} км в месяц`),
       tile('Экономия ГСМ', M(t.save), `в год ${mln(t.save * 12)} млн`, 'success'),
-      tile(`Подписка за ${int(t.cars)} машин`, M(t.sub), `${usd(s.tariff * (1 + s.vat / 100) * t.cars)} с НДС · в год ${mln(t.sub * 12)} млн`),
+      tile(`${saasImg(s) ? 'Подписка Dextra + IMG' : 'Подписка'} за ${int(t.cars)} машин`, M(t.sub),
+        `Dextra ${usd(s.tariff * (1 + s.vat / 100) * t.cars)} с НДС` + (saasImg(s) ? ` + IMG ${mln(saasImg(s) * t.cars)} млн` : '') +
+        ` · в год ${mln(t.sub * 12)} млн`),
       tile('Итог: экономия − подписка', [signedMln(t.net), h('small', null, ' млн сум')], `в год ${signedMln(t.net * 12)} млн`,
         t.net >= 0 ? 'success' : 'danger'),
       tile('Экономия покрывает подписку', pct1(cover), cover === null ? null : cover >= 100 ? 'подписка окупается' : 'подписка не окупается',
         cover === null ? null : cover >= 100 ? 'success' : 'danger'),
       tile('Оптимизация для нуля', beRed === null ? '—' : beRed > 100 ? '> 100%' : '−' + int(beRed) + '%', 'столько км надо срезать, чтобы окупить тариф'),
-      tile('Цена для нуля', usd(bePrice), bePrice === null ? null : `без НДС; при ${usd(bePrice / 2)} экономия вдвое больше подписки`)),
+      tile('Цена для нуля', bePrice !== null && bePrice < 0 ? 'нет' : usd(bePrice), bePrice === null ? null
+        : bePrice < 0 ? 'экономия меньше расхода IMG — даже бесплатная Dextra не окупится'
+        : be2Price < 0 ? 'тариф Dextra без НДС' : `без НДС; при ${usd(be2Price)} экономия вдвое больше подписки`)),
     h('p', { class:'verdict ' + (t.net >= 0 ? 'good' : 'bad') }, verdict));
 }
 
@@ -3257,7 +3275,7 @@ function saasChart(s, g, sc){
   for (let x = 0; x <= xMax; x += 10) g0.push(sv('text', { class:'tick', x:X(x), y:H - 12, 'text-anchor':'middle' }, x ? `−${x}%` : '0'));
   g0.push(sv('line', { class:'cost', x1:X(0), x2:X(xMax), y1:Y(sc), y2:Y(sc) }),
     sv('line', { class:'save', x1:X(0), x2:X(xMax), y1:Y(0), y2:Y(k * xMax) }),
-    sv('text', { class:'lbl', x:X(2), y:Y(sc) - 6 }, `подписка ${mln2(sc)} млн`));
+    sv('text', { class:'lbl', x:X(2), y:Y(sc) - 6 }, `${saasImg(s) ? 'подписка + IMG' : 'подписка'} ${mln2(sc)} млн`));
   for (const p of saasPresets()) if (p.v <= xMax) g0.push(sv('circle', { class:'dot', cx:X(p.v), cy:Y(k * p.v), r:4 }));
   if (be <= xMax) g0.push(sv('circle', { class:'be', cx:X(be), cy:Y(sc), r:5 }),
     sv('text', { class:'lbl', x:Math.min(X(be), W - R - 60), y:Y(sc) + 18, 'text-anchor':'middle' }, `ноль при −${int(be)}%`));
@@ -3270,8 +3288,8 @@ function saasChart(s, g, sc){
   }
   return [h('h3', null, 'Средняя машина в месяц, млн сум'),
     h('p', null, `Средняя машина сети по путевым листам — ${mln2(g)} млн сум газа и амортизации в месяц. Синяя линия — экономия при ` +
-      'оптимизации км, пунктир — подписка с НДС. Точки — готовые варианты сверху, крупная — текущий. Наведите — цифры.'),
-    legend(['save', 'экономия ГСМ'], ['cost', 'подписка с НДС']),
+      'оптимизации км, пунктир — подписка с НДС' + (saasImg(s) ? ' и IMG' : '') + '. Точки — готовые варианты сверху, крупная — текущий. Наведите — цифры.'),
+    legend(['save', 'экономия ГСМ'], ['cost', saasImg(s) ? 'подписка Dextra с НДС + IMG' : 'подписка с НДС']),
     h('div', { class:'scroll' }, sv('svg', { viewBox:`0 0 ${W} ${H}`, role:'img', 'aria-label':'Экономия ГСМ на машину против подписки' }, g0))];
 }
 
@@ -3281,11 +3299,11 @@ function saasMatrix(s, t){
   const tariffs = [...new Set([s.tariff, ...SAAS_TARIFF_STEPS.slice(1).map(m => Math.round(s.tariff * m / 5) * 5)]
     .filter(v => v > 0))].sort((a, b) => b - a);
   if (!tariffs.length) tariffs.push(s.tariff);   // тариф 0 — одна строка, а не пустая таблица
-  const save = r => t.gsmWas * r / 100, cost = tf => t.cars * saasCost(s, tf);
+  const save = r => t.gsmWas * r / 100, cost = tf => t.cars * saasCarCost(s, tf);
   const net = (tf, r) => save(r) - cost(tf);
   const maxAbs = Math.max(...tariffs.flatMap(tf => reds.map(r => Math.abs(net(tf, r))))) || 1;
   return [h('h3', null, `Итог по сети в месяц, млн сум (${int(t.cars)} машин)`),
-    h('p', null, 'Экономия минус подписка. Строки — тариф без НДС, столбцы — оптимизация км; рамка — текущие поля.'),
+    h('p', null, 'Экономия минус подписка' + (saasImg(s) ? ' Dextra и IMG' : '') + '. Строки — тариф Dextra без НДС, столбцы — оптимизация км; рамка — текущие поля.'),
     h('div', { class:'scroll' }, h('table', { class:'mx' },
       h('thead', null, h('tr', null, h('th', { scope:'col' }, 'Тариф'), reds.map(r => h('th', { class:'num', scope:'col' }, `−${int(r)}%`)))),
       h('tbody', null, tariffs.map(tf => h('tr', null, h('td', null, '$' + int(tf)), reds.map(r => {
@@ -3316,7 +3334,7 @@ function saasRegionTable(s, rows, tot){
     { t:`С Dextra: км в месяц (−${int(s.red)}%)`, v:r => r.kmNew, num:true, f:int },
     { t:'С Dextra: ГСМ, млн сум', v:r => M(r.gsmNew), num:true, f:km },
     { t:'Экономия, млн сум', v:r => M(r.save), num:true, f:km },
-    { t:'Подписка, млн сум', tip:'машин × тариф с НДС × курс', v:r => M(r.sub), num:true, f:km },
+    { t:'Подписка, млн сум', tip:'машин × (тариф с НДС × курс + IMG, если кнопка включена)', v:r => M(r.sub), num:true, f:km },
     { t:'Итог, млн сум', v:r => M(r.net), num:true, f:v => signWith(v, km), bad:r => r.net < 0 },
     { t:'Итог за год, млн сум', v:r => r.net === null ? null : M(r.net * 12), num:true, f:v => signWith(v, km), bad:r => r.net < 0 },
     { t:'Экономия покрывает подписку', tip:'экономия / подписка; меньше 100% — подписка дороже экономии',
@@ -3350,13 +3368,14 @@ const saasPick = (id, key, parse) => $(id).addEventListener('click', e => {
 saasPick('saas-presets', 'red', Number);
 saasPick('saas-total', 'withSep', v => v === 'true');
 saasPick('saas-winter', 'withWinter', v => v === 'true');
+saasPick('saas-img', 'withImg', v => v === 'true');
 $('saas-reset').addEventListener('click', () => { saasUi = null; renderSaas(true); });
 
 /* ============ справочник: откуда данные и как считается ============ */
 /* Текст методики — в разметке (без цифр бизнеса: исходник публичный); цифры — живые таблицы из базы:
    справочник регионов (gsm_region_base) и настройки, от которых зависят Оптимизация и Гипотеза. */
 const REF_SETTINGS = ['opt_target_pct', 'gsm_amort_rate', 'gsm_fuel_rate', 'saas_tariff_usd', 'saas_vat_pct', 'saas_usd_rate',
-  'high_season_from', 'high_season_to', 'opt_days_off', 'dextra_return_fix_date', 'separate_cities', 'gsm_winter_months'];
+  'high_season_from', 'high_season_to', 'opt_days_off', 'dextra_return_fix_date', 'separate_cities', 'gsm_winter_months', 'saas_img_cost'];
 function renderRef(){
   const amortAll = cfg('gsm_amort_rate');
   const regs = gsmRegions.map(r => ({ ...r, cars:n(r.cars), km:n(r.km_car_month), price:n(r.gas_price), norm:n(r.gas_norm),
@@ -3459,7 +3478,7 @@ async function signOut(reason){
   $('f-opt-month').replaceChildren();
   gsmRegions = []; gsmRegError = null; saasUi = null; saasPresetMemo = { rows:null, settings:null, val:[] };
   for (const [id] of Object.values(SAAS_FIELDS)) $(id).value = '';
-  ['saas-presets', 'saas-total', 'saas-winter'].forEach(id => $(id).replaceChildren());
+  ['saas-presets', 'saas-total', 'saas-winter', 'saas-img'].forEach(id => $(id).replaceChildren());
   aliasMap = new Map(); imgLoads = []; imgSync = []; imgDraft = []; knownVehicles = null;
   $('img-write').disabled = true; $('img-pick').disabled = false; say('msg-img', '');
   ['tbl-img-preview', 'tbl-img-loads', 'tbl-img-sync'].forEach(id => $(id).replaceChildren());

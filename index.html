@@ -228,6 +228,16 @@
   .opt-tip .tn{color:var(--muted-fg);margin-top:6px;font-size:11px}
   .opt-kpis{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
   .gsm-head{font-size:14px;font-weight:600;margin:4px 0 4px}
+  /* ---------- Справочник: источники данных и формулы ---------- */
+  .ref-block{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-card);padding:16px 20px;margin-bottom:16px}
+  .ref-block h3{font-size:15px;font-weight:600;margin:0 0 8px}
+  .ref-block h4{font-size:13px;font-weight:600;margin:14px 0 4px}
+  .ref-block p,.ref-block li{font-size:13px;line-height:1.55;max-width:980px;margin:0 0 6px}
+  .ref-block ul{margin:0 0 6px;padding-left:20px}
+  .ref-block .f{font-family:var(--mono);font-size:12.5px;background:var(--muted);border-radius:var(--radius-xs);padding:1px 6px}
+  .ref-block .tbl{box-shadow:none;border:1px solid var(--border);margin:8px 0 4px}
+  .ref-nav{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;margin:0 0 16px}
+  .ref-nav a{color:var(--primary);text-decoration:none} .ref-nav a:hover{text-decoration:underline}
   /* ---------- Подписка: ГСМ против тарифа Dextra ---------- */
   .saas-ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px 16px;background:var(--card);
     border-radius:var(--radius);box-shadow:var(--shadow-card);padding:16px;margin-bottom:16px}
@@ -360,6 +370,8 @@
       <svg class="i" viewBox="0 0 24 24"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg></button>
     <button role="tab" id="t-saas" aria-controls="p-saas" aria-selected="false" aria-label="Гипотеза: Dextra во всех регионах" title="Гипотеза">
       <svg class="i" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg></button>
+    <button role="tab" id="t-ref" aria-controls="p-ref" aria-selected="false" aria-label="Справочник: откуда данные и как считается" title="Справочник">
+      <svg class="i" viewBox="0 0 24 24"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></button>
     <button role="tab" id="t-sync" aria-controls="p-sync" aria-selected="false" aria-label="Загрузка данных" title="Загрузка данных">
       <svg class="i" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
     <button role="tab" id="t-cfg" aria-controls="p-cfg" aria-selected="false" aria-label="Настройки расчёта" title="Настройки">
@@ -463,6 +475,107 @@
         <div class="saas-two">
           <div class="chart saas" id="saas-chart"></div>
           <div class="chart saas" id="saas-matrix"></div>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="p-ref" aria-labelledby="t-ref" hidden>
+        <nav class="ref-nav" aria-label="Разделы справочника">
+          <a href="#ref-src">Источники данных</a><a href="#ref-checks">Свод и проверки</a><a href="#ref-opt">Оптимизация</a>
+          <a href="#ref-hyp">Гипотеза</a><a href="#ref-regions">Справочник регионов</a><a href="#ref-cfg">Настройки расчёта</a>
+          <a href="#ref-caveats">Что держать в уме</a></nav>
+
+        <div class="ref-block" id="ref-src">
+          <h3>Источники данных</h3>
+          <p>Главное правило: метрики строятся по Dextra. IMG и путевые листы — для сверки и для «как было».</p>
+          <div class="tbl"><table>
+            <thead><tr><th scope="col">Источник</th><th scope="col">Что берём</th><th scope="col">Как попадает и когда обновляется</th><th scope="col">Где используется</th></tr></thead>
+            <tbody>
+              <tr><td>Dextra TMS</td><td>Маршруты дня: план и факт км, водитель, машина, точки (закрыты или нет, время), старт и финиш</td>
+                <td>Автоматически по API: каждый час 07:00–19:00, итог дня в 20:00 (сегодня и 3 дня назад); утром — ещё и вчера</td>
+                <td>Свод, Детализация, Аналитика, Оптимизация (факт 2026), кнопка «Dextra» в Гипотезе</td></tr>
+              <tr><td>IMG (Wialon)</td><td>Поездки и трек машины по GPS-прибору</td>
+                <td>Автоматически по API: каждый час в :10, итог в 20:10; треки — очередью</td>
+                <td>Проверки 2–4, карта маршрута, ориентир IMG в Оптимизации, кнопка «IMG» в Гипотезе</td></tr>
+              <tr><td>Файл «ГСМ и Амортизация Регионы 2026» (Excel)</td>
+                <td>По каждому региону и месяцу: водителей (= машин), пробег всех машин, сумма за топливо, амортизация</td>
+                <td>Загружается вручную, когда приходит новый файл</td>
+                <td>Оптимизация: «как было» 2025 (км и сколько заплатили). Гипотеза: машины и средний пробег</td></tr>
+              <tr><td>Путевые листы и ведомости амортизации (Excel)</td><td>Км и дни по водителям за месяцы 2025</td>
+                <td>Загружаются вручную</td><td>Оптимизация: таблица «Машины месяца»</td></tr>
+              <tr><td>Цены газа по регионам (Excel)</td><td>Цена 1 м³ метана или пропана в каждом регионе</td>
+                <td>Загружается вручную; новая цена — правка в справочнике регионов</td><td>Ставка топлива за км: Оптимизация (Dextra) и Гипотеза</td></tr>
+              <tr><td>Настройки</td><td>Тариф подписки, НДС, курс, амортизация, цель, рабочие дни, праздники, пороги проверок</td>
+                <td>Меняются в базе без программиста (вкладка «Настройки» показывает все)</td><td>Все разделы</td></tr>
+            </tbody></table></div>
+        </div>
+
+        <div class="ref-block" id="ref-checks">
+          <h3>Свод, Детализация, Аналитика</h3>
+          <ul>
+            <li><b>Проверка 1 — план и факт Dextra:</b> разница факта и плана км маршрута, светофор по порогам из настроек (разница в целых км, как на экране).</li>
+            <li><b>Проверка 2 — Dextra и IMG:</b> факт Dextra против км IMG в окне маршрута (от старта до финиша Dextra).</li>
+            <li><b>Проверка 3 — точки:</b> незакрытые точки и точки, закрытые «без визита» — машина по треку IMG не была рядом.</li>
+            <li><b>Проверка 4 — вне маршрута:</b> км трека IMG в окне маршрута дальше порога от плановой дороги Dextra и точек.</li>
+            <li><b>«Нельзя проверить»</b> — нет данных: маршрут ещё в пути (Dextra не отдала факт км), нет IMG или трек покрывает окно маршрута меньше порога. У проверки 3 маршрут в пути — «в пути», не нарушение.</li>
+            <li>В статистику не идут обкатка Dextra (до даты начала города), выходные и маршруты без закрытых точек.</li>
+            <li><b>Аналитика</b> — те же проверки 1 и 2 по неделям: медиана разницы и маршруты по зонам светофора.</li>
+          </ul>
+        </div>
+
+        <div class="ref-block" id="ref-opt">
+          <h3>Оптимизация: 2026 по Dextra против того же месяца 2025</h3>
+          <h4>Километры</h4>
+          <ul>
+            <li><b>2026:</b> факт Dextra на машину в рабочий день = <span class="f">км Dextra за дни с фактом / машино-дни с фактом</span>. Только маршруты после обкатки, по вчера.</li>
+            <li><b>2025:</b> путевые листы того же месяца = <span class="f">пробег всех машин из файла ГСМ / (водителей × рабочих дней месяца)</span>.</li>
+            <li><b>Рабочий день:</b> воскресенье — выходной всегда, суббота — рабочая только в высокий сезон; праздники — из настроек.</li>
+            <li><b>Дельта:</b> <span class="f">(2026 − 2025) / 2025</span>. Цель — из настройки opt_target_pct.</li>
+            <li><b>Проехали всего км:</b> 2025 — пробег из файла ГСМ за месяц; 2026 — сумма факта Dextra за месяц.</li>
+            <li><b>IMG — ориентир:</b> км того же прибора за весь день и в окне маршрута Dextra.</li>
+          </ul>
+          <h4>ГСМ (топливо + амортизация)</h4>
+          <ul>
+            <li><b>2025 — факт:</b> сколько заплатили по путевым листам: <span class="f">топливо + амортизация</span> из файла ГСМ, по ценам того года.</li>
+            <li><b>2026 — по факту Dextra за тот же объём:</b> <span class="f">факт Dextra на машину в день × водителей 2025 × рабочих дней × ставка за км</span>.</li>
+            <li><b>Ставка за км 2026:</b> <span class="f">норма газа (м³ на 100 км) × цена куба региона / 100 + амортизация за км</span>. У региона без цены газа — своя ставка из справочника регионов; где машины свои — без амортизации.</li>
+            <li>Газ подорожал, поэтому разница в деньгах включает и рост цены, а не только меньше км.</li>
+          </ul>
+        </div>
+
+        <div class="ref-block" id="ref-hyp">
+          <h3>Гипотеза: Dextra во всех регионах</h3>
+          <ul>
+            <li><b>Как было (путевые листы, ориентир):</b> <span class="f">км в месяц = машин × средний пробег машины за месяц</span>; машин — водителей в последнем месяце файла ГСМ, средний пробег — за 12 месяцев файла ГСМ: <span class="f">пробег за 12 месяцев / сумма водителей за 12 месяцев</span>.</li>
+            <li><b>Деньги «как было»:</b> <span class="f">км × (газ за км + амортизация за км)</span> по нынешним ценам — это средний месяц, а не сумма, заплаченная в конкретном месяце.</li>
+            <li><b>С Dextra:</b> те же машины, <span class="f">км × (1 − оптимизация %)</span>; оптимизация по умолчанию — цель, кнопки — факт городов Dextra и IMG за последний закрытый месяц.</li>
+            <li><b>Экономия:</b> <span class="f">деньги «как было» − деньги «с Dextra»</span>.</li>
+            <li><b>Подписка:</b> <span class="f">машин × тариф × (1 + НДС) × курс</span> — за каждую машину каждого региона.</li>
+            <li><b>Покрытие:</b> <span class="f">экономия / подписка</span>; больше 100% — подписка окупается. <b>Оптимизация для нуля:</b> <span class="f">подписка / деньги «как было»</span>. <b>Цена для нуля:</b> <span class="f">экономия на машину / (1 + НДС) / курс</span>.</li>
+          </ul>
+        </div>
+
+        <div class="ref-block" id="ref-regions">
+          <h3>Справочник регионов</h3>
+          <p>Исходные цифры «Гипотезы» и ставок за км. Обновляются в базе (таблица gsm_region_base).</p>
+          <div class="tbl" id="tbl-ref-regions"></div>
+        </div>
+
+        <div class="ref-block" id="ref-cfg">
+          <h3>Настройки расчёта</h3>
+          <p>Значения из базы, которые влияют на Оптимизацию и Гипотезу. Все настройки — на вкладке «Настройки».</p>
+          <div class="tbl" id="tbl-ref-cfg"></div>
+        </div>
+
+        <div class="ref-block" id="ref-caveats">
+          <h3>Что держать в уме</h3>
+          <ul>
+            <li>Факт Dextra — только маршрут, путевой лист — весь день машины: снижение км по Dextra завышено, IMG за весь день — осторожная оценка.</li>
+            <li>До даты dextra_return_fix_date Dextra не считала дорогу обратно на склад — факт тех месяцев ниже настоящего пробега.</li>
+            <li>Экономия станет деньгами, только если водителям платить по км Dextra; пока платят по путевым листам — она на бумаге.</li>
+            <li>Норма газа выведена из файла ГСМ (у большинства регионов «топливо / км» = норма × цена куба), а не взята из приказа.</li>
+            <li>Где топливо платят не строго по км (Ташкент), деньги за отдельный месяц ненадёжны — сравнивать лучше по км.</li>
+            <li>Пока у телефона водителя нет связи, факт Dextra может занижаться — смотрите покрытие GPS в карточке маршрута.</li>
+          </ul>
         </div>
       </section>
 
@@ -1209,7 +1322,7 @@ const fileName = base => `${base}_${loaded ? loaded.from + '_' + loaded.to : 'pu
 /* Каждый раздел рисуется отдельно: ошибка в одном не должна гасить остальные. */
 function renderAll(){
   const parts = [['Свод', renderSummary], ['Детализация', renderDetail], ['Аналитика', renderAnalytics],
-    ['Оптимизация', renderOptimization], ['Подписка', renderSaas], ['Загрузка', renderSync], ['Настройки', renderSettings]];
+    ['Оптимизация', renderOptimization], ['Гипотеза', renderSaas], ['Справочник', renderRef], ['Загрузка', renderSync], ['Настройки', renderSettings]];
   const failed = [];
   for (const [name, fn] of parts){
     try { fn(); } catch(e){ failed.push(`${name}: ${e.message}`); }
@@ -3220,8 +3333,39 @@ saasPick('saas-presets', 'red', Number);
 saasPick('saas-total', 'withSep', v => v === 'true');
 $('saas-reset').addEventListener('click', () => { saasUi = null; renderSaas(true); });
 
+/* ============ справочник: откуда данные и как считается ============ */
+/* Текст методики — в разметке (без цифр бизнеса: исходник публичный); цифры — живые таблицы из базы:
+   справочник регионов (gsm_region_base) и настройки, от которых зависят Оптимизация и Гипотеза. */
+const REF_SETTINGS = ['opt_target_pct', 'gsm_amort_rate', 'gsm_fuel_rate', 'saas_tariff_usd', 'saas_vat_pct', 'saas_usd_rate',
+  'high_season_from', 'high_season_to', 'opt_days_off', 'dextra_return_fix_date', 'separate_cities'];
+function renderRef(){
+  const amortAll = cfg('gsm_amort_rate');
+  const regs = gsmRegions.map(r => ({ ...r, cars:n(r.cars), km:n(r.km_car_month), price:n(r.gas_price), norm:n(r.gas_norm),
+    fuel:n(r.fuel_rate), own:n(r.amort_rate) }));
+  put('tbl-ref-regions', gsmRegError ? emptyBox('Справочник регионов не загрузился', gsmRegError) : table([
+    { t:'Регион', v:r => r.region },
+    { t:'Код Dextra', tip:'есть — Dextra в регионе работает', v:r => r.city, mono:true },
+    { t:'Машин', tip:'водителей в последнем месяце файла ГСМ', v:r => r.cars, num:true, f:int },
+    { t:'Км на машину в месяц', tip:'среднее за 12 месяцев файла ГСМ: пробег / сумма водителей', v:r => r.km, num:true, f:int },
+    { t:'Газ', v:r => r.gas_kind },
+    { t:'Цена 1 м³, сум', tip:'файл цен газа по регионам', v:r => r.price, num:true, f:int },
+    { t:'Норма, м³ на 100 км', v:r => r.price === null ? null : r.norm, num:true, f:km },
+    { t:'Топливо, сум/км', tip:'норма × цена / 100; без цены газа — своя ставка', v:r => r.fuel, num:true, f:km,
+      title:r => r.fuel === null ? null : r.price === null ? 'своя ставка — цены газа нет' : `${km(r.norm)} × ${int(r.price)} / 100` },
+    { t:'Амортизация, сум/км', tip:'своя у региона или общая из настроек', v:r => r.own ?? amortAll, num:true, f:int,
+      title:r => r.own === null ? 'общая — настройка gsm_amort_rate' : r.own === 0 ? 'нет — машины свои' : 'своя ставка региона' },
+    { t:'Примечание', v:r => r.note },
+  ], regs, { empty:'Справочник регионов пуст', emptyHint:'Таблица gsm_region_base не заполнена.' }));
+  const keys = new Set(REF_SETTINGS);
+  const rows = settingRows.filter(x => keys.has(x.key) || x.key.startsWith('stable_from:'))
+    .sort((a, b) => byText(a.key, b.key));
+  put('tbl-ref-cfg', table([
+    { t:'Параметр', v:x => x.key, mono:true }, { t:'Значение', v:x => x.value, mono:true }, { t:'Что значит', v:x => x.note },
+  ], rows, { empty:'Настроек нет', emptyHint:'Похоже, нет доступа к таблице settings.' }));
+}
+
 /* ============ разделы (боковая панель) ============ */
-const TABS = ['t-sum', 't-det', 't-an', 't-opt', 't-saas', 't-sync', 't-cfg'];
+const TABS = ['t-sum', 't-det', 't-an', 't-opt', 't-saas', 't-ref', 't-sync', 't-cfg'];
 function selectTab(id){
   for (const t of TABS){
     const on = t === id;
@@ -3231,7 +3375,7 @@ function selectTab(id){
   }
   $('page-title').textContent = $(id).getAttribute('aria-label');
   /* загрузка и настройки от периода и города не зависят — фильтры там только мешают */
-  $('filters').hidden = ['t-sync', 't-cfg', 't-an', 't-opt', 't-saas'].includes(id);
+  $('filters').hidden = ['t-sync', 't-cfg', 't-an', 't-opt', 't-saas', 't-ref'].includes(id);
   if (routeMap) routeMap.fit();   // карта, нарисованная в скрытой вкладке, получила размер
 }
 TABS.forEach((t, i) => {
@@ -3301,7 +3445,7 @@ async function signOut(reason){
   ['tbl-img-preview', 'tbl-img-loads', 'tbl-img-sync'].forEach(id => $(id).replaceChildren());
   for (const k of Object.keys(csvTables)) delete csvTables[k];
   ['kpis', 'tbl-sum', 'tbl-det', 'route-detail', 'sum-route-detail', 'tbl-sync-city', 'tbl-sync', 'tbl-cfg', 'an-charts', 'tbl-an',
-    'opt-charts', 'tbl-opt', 'tbl-optd', 'saas-now', 'saas-chart', 'saas-matrix', 'tbl-saas']
+    'opt-charts', 'tbl-opt', 'tbl-optd', 'saas-now', 'saas-chart', 'saas-matrix', 'tbl-saas', 'tbl-ref-regions', 'tbl-ref-cfg']
     .forEach(id => $(id).replaceChildren());
   ['note-sum', 'note-det', 'note-an', 'note-opt', 'note-optd', 'note-saas', 'note-saas-reg'].forEach(id => { $(id).textContent = ''; });
   say('msg', '');

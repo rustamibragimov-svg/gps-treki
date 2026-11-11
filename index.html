@@ -1185,7 +1185,8 @@ async function loadData(){
   $('btn-load').disabled = true;
   try {
     const range = `route_date=gte.${q(f.from)}&route_date=lte.${q(f.to)}` + (f.city ? `&city=eq.${q(f.city)}` : '');
-    const [s, r, l, ri, al, il, is, ct, wk, op, gr] = await Promise.all([
+    /* Свод и Детализация — за выбранный период, параллельно (лёгкие запросы) */
+    const [s, r, l, ri, al, il, is, ct] = await Promise.all([
       api('settings?select=key,value,note&order=key'),
       apiAll(`v_route_metrics?select=*&${range}&order=route_date.desc,city,courier_name,route_id`),
       api('sync_log?select=*&order=id.desc&limit=200'),
@@ -1194,18 +1195,6 @@ async function loadData(){
       api('img_loads?select=*&order=id.desc&limit=300'),
       api('img_sync_log?select=*&dry_run=eq.false&order=id.desc&limit=300'),
       apiAll(`v_route_control?select=*&${range}&order=route_id`),
-      /* Аналитика — вся история, от периода и города сверху не зависит; её сбой не должен
-         гасить Свод и Детализацию — ошибка показывается только в её разделе */
-      apiAll('v_week_control?select=*&order=week_start,city').then(rows => ({ rows }), error => ({ rows:[], error })),
-      /* Оптимизация — так же: вся история, сбой виден только в её разделе */
-      Promise.all([apiAll('v_opt_period?select=*&order=period,period_start,city'),
-        apiAll('v_opt_doc?select=*&order=month,city,driver_name'),
-        apiAll('v_opt_car_month?select=*&order=month,city,plate_key')])
-        .then(([rows, docs, cars]) => ({ rows, docs, cars }), error => ({ rows:[], docs:[], cars:[], error })),
-      /* Подписка — справочник регионов; сбой виден только в её разделе */
-      Promise.all([api('gsm_region_base?select=*&order=sort'),
-        apiAll('gsm_region_month?select=region,month,drivers,km,bad_reason&order=region,month')])
-        .then(([rows, months]) => ({ rows, months }), error => ({ rows:[], months:[], error })),
     ]);
     if (seq !== loadSeq) return false;   // пока грузили, запустили новую загрузку или вышли
     settingRows = s;
@@ -1217,9 +1206,6 @@ async function loadData(){
     routes = r.filter(inCityPick(f.city, separateCities()))
       .map(x => ({ ...x, img:imgBy.get(x.route_id) || null, ctl:ctlBy.get(x.route_id) || null }));
     syncLog = l; imgLoads = il; imgSync = is;
-    weekRows = wk.rows; weekError = wk.error ? wk.error.message : null;
-    optRows = op.rows; optDocs = op.docs; optCars = op.cars; optError = op.error ? op.error.message : null;
-    gsmRegions = gr.rows; gsmMonths = gr.months; gsmRegError = gr.error ? gr.error.message : null;
     aliasMap = new Map(al.map(x => [x.alias_key, x.plate_key]));
     loaded = { from:f.from, to:f.to, city:f.city };
     if (openRoute && !routes.some(x => x.route_id === openRoute)){ openRoute = null; detailSeq++; dropRouteMap(); }
@@ -1231,9 +1217,15 @@ async function loadData(){
     const lastSync = syncLog.find(x => x.status !== 'error');
     conn('ok', `${ruDate(f.from)} — ${ruDate(f.to)} · ${routes.length} маршрутов` +
       (lastSync ? ` · Dextra обновлена ${dt(lastSync.finished_at || lastSync.started_at)}` : ''));
+    /* история (Аналитика, Оптимизация, Гипотеза) от периода не зависит: при повторной загрузке до прихода новой
+       остаётся прежняя, при первой — разделы показывают «загружается» (histLoading) */
+    histLoading = true;
     renderAll();
     /* открытая карточка — пересобрать по свежим данным, не переключая вкладку */
     if (openRoute) showRoute(openRoute, { keepTab:true });
+    if (!await loadHistory(seq)) return false;
+    histLoading = false;
+    renderHistory();   // только разделы истории: Свод и открытую карточку не трогаем
     return true;
   } catch(e){
     if (seq !== loadSeq) return false;
@@ -1332,15 +1324,50 @@ const fileName = base => `${base}_${loaded ? loaded.from + '_' + loaded.to : 'pu
 
 /* ============ отрисовка ============ */
 /* Каждый раздел рисуется отдельно: ошибка в одном не должна гасить остальные. */
-function renderAll(){
-  const parts = [['Свод', renderSummary], ['Детализация', renderDetail], ['Аналитика', renderAnalytics],
-    ['Оптимизация', renderOptimization], ['Гипотеза', renderSaas], ['Справочник', renderRef], ['Загрузка', renderSync], ['Настройки', renderSettings]];
+/* Аналитика, Оптимизация и Гипотеза — вся история, каждое представление пересчитывает её целиком (1,5–2 с). Поэтому они
+   грузятся после Свода и строго по очереди: разом со Сводом они делили процессор бесплатного тарифа, и при фоновой
+   загрузке IMG запросы вылетали по таймауту 8 с, вместе со Сводом (11.11.2026). Сбой каждого виден только в его разделе.
+   false — загрузку обогнала новая или вышли из системы: ничего не записано. */
+let histLoading = false;
+async function loadHistory(seq){
+  const alive = () => seq === loadSeq;
+  const wk = await apiAll('v_week_control?select=*&order=week_start,city').then(rows => ({ rows }), error => ({ rows:[], error }));
+  if (!alive()) return false;
+  const op = await (async () => {
+    const rows = await apiAll('v_opt_period?select=*&order=period,period_start,city');
+    if (!alive()) return null;
+    const docs = await apiAll('v_opt_doc?select=*&order=month,city,driver_name');
+    if (!alive()) return null;
+    const cars = await apiAll('v_opt_car_month?select=*&order=month,city,plate_key');
+    return { rows, docs, cars };
+  })().catch(error => ({ rows:[], docs:[], cars:[], error }));
+  if (!alive() || !op) return false;
+  /* Гипотеза — справочник регионов и файл ГСМ по месяцам (лёгкие) */
+  const gr = await Promise.all([api('gsm_region_base?select=*&order=sort'),
+    apiAll('gsm_region_month?select=region,month,drivers,km,bad_reason&order=region,month')])
+    .then(([rows, months]) => ({ rows, months }), error => ({ rows:[], months:[], error }));
+  if (!alive()) return false;
+  weekRows = wk.rows; weekError = wk.error ? wk.error.message : null;
+  optRows = op.rows; optDocs = op.docs; optCars = op.cars; optError = op.error ? op.error.message : null;
+  gsmRegions = gr.rows; gsmMonths = gr.months; gsmRegError = gr.error ? gr.error.message : null;
+  return true;
+}
+function renderParts(parts){
   const failed = [];
   for (const [name, fn] of parts){
     try { fn(); } catch(e){ failed.push(`${name}: ${e.message}`); }
   }
   if (failed.length) say('msg', 'Часть разделов не отрисовалась — ' + failed.join('; '), 'err');
 }
+function historyParts(){
+  return [['Аналитика', renderAnalytics], ['Оптимизация', renderOptimization], ['Гипотеза', renderSaas], ['Справочник', renderRef]];
+}
+function renderAll(){
+  renderParts([['Свод', renderSummary], ['Детализация', renderDetail], ...historyParts(), ['Загрузка', renderSync], ['Настройки', renderSettings]]);
+}
+function renderHistory(){ renderParts(historyParts()); }
+/* раздел истории, пока она грузится в первый раз (повторная загрузка показывает прежние данные) */
+function histWait(){ return emptyBox('Загружается…', 'История грузится после Свода — несколько секунд.'); }
 
 
 function checkTile(k, a, rule){
@@ -2374,6 +2401,7 @@ function renderAnalytics(){
   if (weekError || !rows.length){
     put('an-charts', weekError
       ? emptyBox('Динамика не загрузилась', weekError + ' Нажмите «Показать» на Своде, чтобы повторить.')
+      : histLoading && !weekRows.length ? histWait()
       : emptyBox('Недель с маршрутами нет', anCities.size > 1 ? 'Для выбранных городов статистика ещё не началась.'
         : anCities.size ? 'Для этого города статистика ещё не началась.' : 'Статистика ещё не началась.'));
     $('tbl-an').replaceChildren();
@@ -2949,6 +2977,7 @@ function renderOptimization(){
   if (optError || !months.length){
     put('opt-charts', optError
       ? emptyBox('Оптимизация не загрузилась', optError + ' Нажмите «Показать» на Своде, чтобы повторить.')
+      : histLoading && !optRows.length ? histWait()
       : emptyBox('Данных нет', optCities.size > 1
         ? 'У выбранных городов нет маршрутов Dextra после обкатки, которые можно сложить (или в Dextra меньше половины машин из базы).'
         : optCities.size ? 'У этого города ещё нет маршрутов Dextra после обкатки.' : 'Маршрутов Dextra после обкатки ещё нет.'));
@@ -3017,8 +3046,8 @@ function renderOptimization(){
 /* машины месяца: 2025 по документам и 2026 по Dextra одним списком — без сопоставления водителей
    (правило пользователя: важны км машины, а не кто ездил); только месяцы, которые в 2026 уже начались */
 function renderOptDrivers(today){
-  if (optError){
-    put('tbl-optd', emptyBox('Машины не загрузились', optError));
+  if (optError || (histLoading && !optRows.length)){
+    put('tbl-optd', optError ? emptyBox('Машины не загрузились', optError) : histWait());
     csvTables.optd = { cols:[], rows:[], file:fileName('optimizaciya_mashiny') };
     return;
   }
@@ -3285,7 +3314,8 @@ function renderSaasOut(){
   const rows = missing.length ? [] : regs.map(r => saasCalc(r, s, sc));
   const tot = saasTotal(rows, s);
   const fail = gsmRegError ? ['ГСМ регионов не загрузился', gsmRegError + ' Нажмите «Показать» на Своде, чтобы повторить.']
-    : !regs.length ? ['ГСМ регионов нет', 'Таблица gsm_region_base пуста — заполните её из файла ГСМ.']
+    : histLoading && !gsmRegions.length ? ['Загружается…', 'История грузится после Свода — несколько секунд.']
+    : !regs.length ?['ГСМ регионов нет', 'Таблица gsm_region_base пуста — заполните её из файла ГСМ.']
     : !s.from ? ['ГСМ по месяцам нет', 'Таблица gsm_region_month пуста — загрузите месяцы из файла ГСМ.']
     : missing.length ? ['Не хватает чисел', 'Заполните поля выше или добавьте в настройки: ' + missing.join(', ') + '.']
     : !tot.cars ? ['Нет машин для расчёта', rows.some(r => r.gsmWas !== null)
@@ -3522,7 +3552,8 @@ function renderRef(){
   for (const x of gsmMonths) if (x.bad_reason) badBy.set(x.region, [...(badBy.get(x.region) || []), `${ymName(ym(x.month), true)} — ${x.bad_reason}`]);
   const regs = gsmRegions.map(r => ({ ...r, cars:n(r.cars), km:kmBy.get(r.region) ?? null, price:n(r.gas_price), norm:n(r.gas_norm),
     fuel:n(r.fuel_rate), own:n(r.amort_rate), winter:n(r.winter_fuel_rate), bad:badBy.get(r.region) || [] }));
-  put('tbl-ref-regions', gsmRegError ? emptyBox('Справочник регионов не загрузился', gsmRegError) : table([
+  put('tbl-ref-regions', gsmRegError ? emptyBox('Справочник регионов не загрузился', gsmRegError)
+    : histLoading && !gsmRegions.length ? histWait() : table([
     { t:'Регион', v:r => r.region },
     { t:'Код Dextra', tip:'есть — Dextra в регионе работает', v:r => r.city, mono:true },
     { t:'Машин', tip:'водителей в последнем месяце файла ГСМ', v:r => r.cars, num:true, f:int },
@@ -3617,7 +3648,7 @@ async function signOut(reason){
   loadSeq++; detailSeq++;
   settings = {}; settingRows = []; routes = []; syncLog = [];
   loaded = null; openRoute = null; openDay = null; routeHost = 'det'; focusCheck = null;
-  weekRows = []; anCities = new Set(); weekError = null;
+  weekRows = []; anCities = new Set(); weekError = null; histLoading = false;
   pressCities('f-an-city', anCities);
   optRows = []; optDocs = []; optCars = []; optCities = new Set(); optError = null; optMonth = '';
   pressCities('f-opt-city', optCities);

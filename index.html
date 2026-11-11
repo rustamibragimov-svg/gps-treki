@@ -253,6 +253,8 @@
   .saas-two{display:grid;grid-template-columns:1.15fr 1fr;gap:16px;align-items:start}
   .saas-two > *{min-width:0}
   .chart.saas svg{min-width:480px}
+  /* у заголовков таблицы регионов «Гипотезы» есть описание — пунктир и курсор-подсказка намекают навести мышь */
+  #tbl-saas th[title]{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
   .chart.saas .zone-bad{fill:var(--danger);opacity:.07} .chart.saas .zone-good{fill:var(--success);opacity:.09}
   .chart.saas .save{stroke:var(--primary);stroke-width:2.5;stroke-linecap:round;fill:none}
   .chart.saas .cost{stroke:var(--fg);stroke-width:2;stroke-dasharray:6 4;fill:none}
@@ -3456,42 +3458,80 @@ function saasMatrix(s, t){
 }
 
 /* по регионам: «как было» и «с Dextra»; суммы в CSV — в млн сум, как в заголовках */
+/* подсказки к заголовкам таблицы регионов (просьба пользователя 11.11.2026: «при наводке на название колонки — описание»):
+   что это и как считается. Числа — из полей и настроек на лету: исходник публичный, цифры бизнеса в него не пишутся */
+function saasColTips(s){
+  const img = saasImg(s);
+  return {
+    region:'Регион из файла «ГСМ и амортизация». Пометка Dextra — там Dextra уже работает. Бледным — город, который смотрится ' +
+      'отдельно: в итог входит кнопкой «В итоге». Наведите на название региона — его примечания.',
+    cars:'Сколько машин в расчёте и в подписке: водители в последнем месяце файла ГСМ. Если у региона своё число ' +
+      '(например, машины, заведённые в Dextra), — оно в примечании региона.',
+    km:`Путевые листы (файл ГСМ), период ${saasPeriodLabel(s)}: сумма км региона за вошедшие месяцы / сумма водителей ` +
+      'за те же месяцы. Не входят ошибки файла и месяцы, которых в файле нет.',
+    months:'Сколько месяцев периода вошло в средний пробег — из скольких. Наведите на ячейку — какие месяцы не вошли и почему.',
+    gas:'Вид газа региона: метан или пропан (файл цен газа).',
+    price:'Цена 1 м³ газа в регионе, сум (файл цен газа). Пусто — цены нет, у региона своя ставка сум за км.',
+    perKm:'Сколько стоит 1 км: газ = норма газа (м³ на 100 км, справочник регионов) × цена 1 м³ / 100, плюс амортизация за км ' +
+      (s.amort === null ? '(поле «Амортизация» пусто — считаются только регионы со своей амортизацией; машины свои — 0). '
+        : `(общая ${int(s.amort)} сум; у региона со своей амортизацией — своя; машины свои — 0). `) +
+      (s.withWinter ? 'Включены зимние расходы: газ — среднее за год, зимние месяцы — по зимней ставке файла ГСМ, если она выше ' +
+        '(у региона без зимней ставки — без изменений). ' : '') +
+      'Наведите на ячейку — расчёт региона.',
+    kmWas:'Км на машину в месяц × машин: сколько км проезжают все машины региона в месяц по путевым листам.',
+    gsmWas:'Было: км в месяц × (газ + амортизация за км). Это не сумма из файла ГСМ, а те же км по нынешним ценам — ' +
+      'чтобы «было» и «с Dextra» сравнивались по одной цене.',
+    red:'На сколько меньше км с Dextra: процент из поля «Оптимизация км с Dextra» сверху (цель или факт Dextra). ' +
+      'У региона, где путевых листов уже нет, — его собственный факт Dextra за последний закрытый месяц: км на машину ' +
+      'в день по Dextra к тому же месяцу 2025.',
+    kmNew:'Было: км в месяц × (1 − оптимизация км).',
+    gsmNew:'С Dextra: км в месяц × та же цена 1 км (газ + амортизация).',
+    save:'Было: ГСМ − С Dextra: ГСМ, в месяц. Деньгами станет, если водителям платить по км Dextra.',
+    sub:`Машин × тариф ${usd(s.tariff)} × (1 + НДС ${s.vat === null ? '—' : (Number.isInteger(s.vat) ? int(s.vat) : nf1.format(s.vat))}%) × курс ` +
+      `${s.rate === null ? '—' : nf2.format(s.rate)} сум за $` + (img ? ` + расход IMG ${int(img)} сум за машину (кнопка «+ расход IMG»)` : '') +
+      ', в месяц.',
+    net:'Экономия − подписка, в месяц. Минус — подписка дороже экономии.',
+    netYear:'Итог в месяц × 12.',
+    cover:'Экономия / подписка × 100%, округлено до целого. Красным — экономия меньше подписки (даже если округлилось до 100%).',
+  };
+}
 function saasRegionTable(s, rows, tot){
   const M = v => v === null || v === undefined ? null : v / 1e6;
+  const tip = saasColTips(s);
   const cols = [
-    { t:'Регион', v:r => r.region, f:(v, r) => r.dextra ? [v, ' ', chip('Dextra')] : v, weak:r => r.separate,
+    { t:'Регион', tip:tip.region, v:r => r.region, f:(v, r) => r.dextra ? [v, ' ', chip('Dextra')] : v, weak:r => r.separate,
       title:r => [r.separate ? 'смотрится отдельно (separate_cities)' : null, r.note,
         r.total ? null : r.km === null ? null : `${int(r.km)} км на машину в месяц`].filter(Boolean).join('\n') || null },
-    { t:'Машин', v:r => r.cars, num:true, f:int },
-    { t:'Км на машину в месяц', tip:`путевые листы, среднее за ${saasPeriodLabel(s)}: км / водителей по месяцам, что вошли`,
+    { t:'Машин', tip:tip.cars, v:r => r.cars, num:true, f:int },
+    { t:'Км на машину в месяц', tip:tip.km,
       v:r => r.total ? null : r.km, num:true, f:int },
-    { t:'Мес. в среднем', tip:'сколько месяцев периода вошло в средний пробег; наведите — какие не вошли и почему',
+    { t:'Мес. в среднем', tip:tip.months,
       v:r => r.total || !r.kmTotal ? null : `${r.kmUsed} из ${r.kmTotal}`, num:true,
       bad:r => !r.total && r.kmTotal > 0 && r.kmUsed === 0,
       title:r => r.total || !r.kmSkipped?.length ? null : 'не вошли:\n' + r.kmSkipped.join('\n') },
-    { t:'Газ', v:r => r.gas },
-    { t:'Цена 1 м³, сум', v:r => r.price, num:true, f:int },
-    { t:'Газ + амортизация, сум/км', tip:'м³ газа на 1 км × цена куба + амортизация', v:r => r.fuel === null || r.fuel === undefined || saasAmort(r, s) === null ? null : saasFuel(r, s) + saasAmort(r, s),
+    { t:'Газ', tip:tip.gas, v:r => r.gas },
+    { t:'Цена 1 м³, сум', tip:tip.price, v:r => r.price, num:true, f:int },
+    { t:'Газ + амортизация, сум/км', tip:tip.perKm, v:r => r.fuel === null || r.fuel === undefined || saasAmort(r, s) === null ? null : saasFuel(r, s) + saasAmort(r, s),
       num:true, f:km, title:r => r.total ? null : r.fuel === null ? 'ставки топлива нет — регион не входит в итог'
         : `газ ${km(r.fuel)} ` + (r.price === null ? '(цены газа нет — своя ставка сум/км)'
           : `= ${nfM3.format(r.norm / 100)} м³ на 1 км × ${int(r.price)} (норма ${km(r.norm)} м³ на 100 км)`) +
           (r.amortOwn === 0 ? ' + амортизации нет (машины свои)' : ` + амортизация ${int(saasAmort(r, s))}`) +
           (s.withWinter && saasFuel(r, s) !== r.fuel ? `; с зимой газ в среднем ${km(saasFuel(r, s))}: зимой ${km(r.winter)} × ${int(saasWinterMonths())} мес.` : '') },
-    { t:'Было: км в месяц', tip:`км на машину (среднее за ${saasPeriodLabel(s)}) × машин`, v:r => r.kmWas, num:true, f:int },
-    { t:'Было: ГСМ, млн сум', v:r => M(r.gsmWas), num:true, f:km },
-    { t:'Оптимизация км', tip:'общий процент из поля сверху; у региона, где путевых листов уже нет, — его факт Dextra',
+    { t:'Было: км в месяц', tip:tip.kmWas, v:r => r.kmWas, num:true, f:int },
+    { t:'Было: ГСМ, млн сум', tip:tip.gsmWas, v:r => M(r.gsmWas), num:true, f:km },
+    { t:'Оптимизация км', tip:tip.red,
       /* в ячейке и CSV — изменение км со знаком: −24 = км на 24% меньше */
       v:r => r.total || r.red === null || r.red === undefined ? null : -r.red, num:true, f:v => v === null ? '—' : redText(-v),
       title:r => r.total ? null : r.own ? `факт Dextra за ${r.own.mon}: км на машину в день к тому же месяцу 2025 (раздел «Оптимизация»); ` +
         `путевых листов нет с ${monthName(r.payFrom)}. Оговорки: факт Dextra — только маршрут, путевой лист — весь день; ` +
         'процент — за один месяц, а «как было» — среднее за период' : r.payFrom ? 'путевых листов нет, но факта Dextra за закрытый месяц нет — общий процент' : null },
-    { t:'С Dextra: км в месяц', v:r => r.kmNew, num:true, f:int },
-    { t:'С Dextra: ГСМ, млн сум', v:r => M(r.gsmNew), num:true, f:km },
-    { t:'Экономия, млн сум', v:r => M(r.save), num:true, f:km },
-    { t:'Подписка, млн сум', tip:'машин × (тариф с НДС × курс + IMG, если кнопка включена)', v:r => M(r.sub), num:true, f:km },
-    { t:'Итог, млн сум', v:r => M(r.net), num:true, f:v => signWith(v, km), bad:r => r.net < 0 },
-    { t:'Итог за год, млн сум', v:r => r.net === null ? null : M(r.net * 12), num:true, f:v => signWith(v, km), bad:r => r.net < 0 },
-    { t:'Экономия покрывает подписку', tip:'экономия / подписка; меньше 100% — подписка дороже экономии',
+    { t:'С Dextra: км в месяц', tip:tip.kmNew, v:r => r.kmNew, num:true, f:int },
+    { t:'С Dextra: ГСМ, млн сум', tip:tip.gsmNew, v:r => M(r.gsmNew), num:true, f:km },
+    { t:'Экономия, млн сум', tip:tip.save, v:r => M(r.save), num:true, f:km },
+    { t:'Подписка, млн сум', tip:tip.sub, v:r => M(r.sub), num:true, f:km },
+    { t:'Итог, млн сум', tip:tip.net, v:r => M(r.net), num:true, f:v => signWith(v, km), bad:r => r.net < 0 },
+    { t:'Итог за год, млн сум', tip:tip.netYear, v:r => r.net === null ? null : M(r.net * 12), num:true, f:v => signWith(v, km), bad:r => r.net < 0 },
+    { t:'Экономия покрывает подписку', tip:tip.cover,
       v:r => r.sub ? Math.round(r.save / r.sub * 100) : null, num:true, f:v => v === null ? '—' : int(v) + '%',
       bad:r => r.sub !== null && r.save < r.sub },
   ];
